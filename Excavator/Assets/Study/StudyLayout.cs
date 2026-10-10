@@ -14,6 +14,9 @@ using UnityEngine;
 //   +------------------------------------------------+
 //
 // The camera panel on the right is used only in C2/C3; in C1 it stays empty.
+// DRIVING scenario: the panel has two windows instead of three:
+//   top    = BIRD'S-EYE VIEW (always on)
+//   bottom = OBSTACLE CAMERA (only while something is close, see PopupViews)
 // Keeping the driver view the same size in every condition avoids giving one
 // condition a bigger "windshield" than another.
 // All values are fractions of the screen (0..1), designed for a 16:9 screen.
@@ -28,10 +31,13 @@ public class StudyLayout : MonoBehaviour
     public static Rect DriverView => new Rect(0F, BarHeight, 1F - PanelWidth, 1F - BarHeight);
 
     // Camera slot 0 = top, 1 = middle, 2 = bottom.
-    public static Rect PanelSlot(int i)
+    public static Rect PanelSlot(int i) => PanelSlot(i, 3);
+
+    // Panel split into 'count' equal windows, slot 0 at the top.
+    public static Rect PanelSlot(int i, int count)
     {
         float x = 1F - PanelWidth + Gap, w = PanelWidth - 2F * Gap;
-        float h = (1F - BarHeight - 4F * Gap) / 3F;
+        float h = (1F - BarHeight - (count + 1) * Gap) / count;
         float y = 1F - Gap - (i + 1) * h - i * Gap;
         return new Rect(x, y, w, h);
     }

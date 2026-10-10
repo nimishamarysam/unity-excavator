@@ -14,6 +14,12 @@ using UnityEngine.UI;
 //   - Moving obstacle (worker): the pop-up follows the worker across the screen.
 // The pop-up never covers the object itself or the centre of the driver view.
 // At most two pop-ups at a time (the two closest). Logged as popup_open / popup_close.
+//
+// DRIVING scenario (ContextViews.UseDrivingLayout): "docked" mode instead. ONE obstacle camera in
+// the bottom half of the right-hand panel (the driver view stays free). It appears when an obstacle
+// or worker comes within its opening distance, always shows the closest one (switches if another
+// becomes clearly closer), and disappears again when everything is far away. The label says what it
+// is, how far, and on which side of the machine.
 // ---------------------------------------------------------------------------
 
 public class PopupViews : MonoBehaviour
@@ -26,8 +32,11 @@ public class PopupViews : MonoBehaviour
     public Vector2 size = new Vector2(0.20F, 0.24F);   // fraction of the screen
     public float followSpeed = 8F;
 
+    public float switchMargin = 0.5F;         // docked: switch to another object when it is this much closer
+
     ExcavatorController ctl;
     readonly List<Popup> popups = new List<Popup>();
+    bool docked;
 
     class Popup
     {
@@ -41,13 +50,20 @@ public class PopupViews : MonoBehaviour
         public float farSince = -1F;
     }
 
-    public void Init(ExcavatorController controller) { ctl = controller; }
+    public void Init(ExcavatorController controller)
+    {
+        ctl = controller;
+        docked = ContextViews.UseDrivingLayout;
+        if (docked) maxPopups = 1;
+    }
 
     void LateUpdate()
     {
         var sm = StudyManager.Instance;
-        bool active = ContextViews.PopupStyleForDriving && sm != null && sm.ShowContextViews && ctl != null && ctl.Machine != null &&
-                      ctl.IsTravelMode && (sm.CurrentState == StudyManager.State.Running || sm.CurrentState == StudyManager.State.Paused);
+        bool running = sm != null && sm.ShowContextViews && ctl != null && ctl.Machine != null &&
+                       (sm.CurrentState == StudyManager.State.Running || sm.CurrentState == StudyManager.State.Paused);
+        // Docked (driving scenario): in any mode. Floating: travel mode with the pop-up experiment switch on.
+        bool active = running && (docked || (ContextViews.PopupStyleForDriving && ctl.IsTravelMode));
         if (!active) { CloseAll(); return; }
 
         // Candidates: visible obstacles and workers inside their opening distance, closest first.
@@ -55,6 +71,14 @@ public class PopupViews : MonoBehaviour
         foreach (var h in Hazard.All)
             if (h.active && h.gameObject.activeInHierarchy && IsPopupKind(h) && h.CurrentDistance <= OpenDistance(h)) near.Add(h);
         near.Sort((a, b) => a.CurrentDistance.CompareTo(b.CurrentDistance));
+
+        // Docked: keep showing the closest object; switch when another one is clearly closer.
+        if (docked && popups.Count == 1 && near.Count > 0 && near[0] != popups[0].hazard &&
+            (popups[0].hazard == null || near[0].CurrentDistance < popups[0].hazard.CurrentDistance - switchMargin))
+        {
+            Close(popups[0]);
+            popups.Clear();
+        }
 
         // Open pop-ups for new close hazards.
         foreach (var h in near)
@@ -118,7 +142,8 @@ public class PopupViews : MonoBehaviour
         trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one; trt.offsetMin = new Vector2(8, 0); trt.offsetMax = Vector2.zero;
         p.label = tGo.GetComponent<Text>();
         p.label.font = font; p.label.fontSize = 16; p.label.color = Color.white; p.label.alignment = TextAnchor.MiddleLeft;
-        p.label.text = h.kind == HazardKind.Worker ? "WORKER" : h.kind == HazardKind.Truck ? "TRUCK" : "OBSTACLE";
+        p.label.text = KindLabel(h);
+        if (docked) { p.label.fontSize = 18; p.label.rectTransform.parent.GetComponent<RectTransform>().sizeDelta = new Vector2(330, 30); }
 
         StudyLogger.Log("popup_open", $"{h.hazardId};{h.kind};dist={h.CurrentDistance:F2}");
         return p;
@@ -146,6 +171,17 @@ public class PopupViews : MonoBehaviour
         Vector3 camPos = gap + outward * 3.5F + Vector3.up * 3.5F;
         p.cam.transform.position = camPos;
         p.cam.transform.rotation = Quaternion.LookRotation(gap - camPos, Vector3.up);
+
+        if (docked)
+        {
+            Rect dock = StudyLayout.PanelSlot(1, 2);
+            p.cam.rect = dock;
+            p.box.anchorMin = dock.min;
+            p.box.anchorMax = dock.max;
+            p.box.offsetMin = p.box.offsetMax = Vector2.zero;
+            p.label.text = $"{KindLabel(h)}  {h.CurrentDistance:0.0} m  {SideText(hp)}";
+            return;
+        }
 
         // 2. Screen position: next to the object as the driver sees it, inside the driver view.
         Rect view = StudyLayout.DriverView;
@@ -183,6 +219,20 @@ public class PopupViews : MonoBehaviour
         s.x = Mathf.Clamp(s.x, view.xMin, view.xMax);
         s.y = Mathf.Clamp(s.y, view.yMin, view.yMax);
         return s;
+    }
+
+    static string KindLabel(Hazard h) => h.kind == HazardKind.Worker ? "WORKER" : h.kind == HazardKind.Truck ? "TRUCK" : "OBSTACLE";
+
+    // Where the object is relative to the machine: FRONT / REAR and LEFT / RIGHT.
+    string SideText(Vector3 hp)
+    {
+        var m = ctl.Machine;
+        Vector3 d = hp - m.SwingCenter; d.y = 0F;
+        float ahead = Vector3.Dot(d, m.ForwardFlat), right = Vector3.Dot(d, Vector3.Cross(Vector3.up, m.ForwardFlat));
+        string fb = ahead > 1.5F ? "FRONT" : ahead < -1.5F ? "REAR" : "";
+        string lr = right > 0.8F ? "RIGHT" : right < -0.8F ? "LEFT" : "";
+        string s = (fb + " " + lr).Trim();
+        return s == "" ? "" : "- " + s;
     }
 
     void Close(Popup p)

@@ -63,8 +63,8 @@ public class ObstacleCues : MonoBehaviour
             seen.Add(h);
             UpdateVelocity(t);
 
-            bool typeOn = IsDynamic(h) ? AttentionCues.DynamicObstacleCues : AttentionCues.StaticObstacleCues;
-            bool want = visible && typeOn && h.active && h.gameObject.activeInHierarchy && InRange(h, t.shown);
+            bool typeOn = IsDynamic(h) ? root.DynamicOn : root.StaticOn;
+            bool want = visible && typeOn && h.active && h.gameObject.activeInHierarchy && InRange(h, t.shown) && Relevant(h);
             if (want != t.shown)
             {
                 t.shown = want;
@@ -103,6 +103,20 @@ public class ObstacleCues : MonoBehaviour
         float range = Range(h);
         if (range <= 0F) return h.CurrentLevel != Hazard.Level.Clear;
         return h.CurrentDistance <= (shownNow ? range + hysteresis : range);
+    }
+
+    // Profile filters (e.g. driving: only obstacles near the planned path, gate posts only when close).
+    bool Relevant(Hazard h)
+    {
+        if (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear) return true;
+        var p = root.Profile;
+        if (p.gatePostsOnlyAtWarning && h.hazardId.Contains("post")) return false;
+        if (p.obstaclesOnlyNearPath && h.kind == HazardKind.Obstacle)
+        {
+            var d = root.Driving;
+            return d == null || !d.HasPath || d.NearPath.Contains(h);
+        }
+        return true;
     }
 
     // ---------- drawing ----------
@@ -200,12 +214,13 @@ public class ObstacleCues : MonoBehaviour
         // --- driver view: rectangle or edge marker ---
         string label = $"{Name(h)}  {h.CurrentDistance:0.0} m";
         if (root.PassAdvice.TryGetValue(h, out var advice)) label += "\n" + advice;
-        if (IsDynamic(h)) label += "\n" + MotionText(t, cam);
+        if (IsDynamic(h) && root.Profile.workerMotionText) label += "\n" + MotionText(t, cam);
 
         Vector3 centerVp = Vector3.zero;
         if (cam != null && CueKit.ProjectBox(cam, b, out Rect r, out centerVp))
             t.box.ShowBox(r, col, label);
-        else if (cam != null && (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear))
+        else if (cam != null && (root.Profile.edgeMarkersForAll ? (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear)
+                                                                : (IsDynamic(h) && h.CurrentLevel != Hazard.Level.Clear)))
             EdgeMarker(t, cam, centerVp, col, $"{Name(h)}  {h.CurrentDistance:0.0} m", edgeCount);
         else
             t.box.Hide();
@@ -229,13 +244,17 @@ public class ObstacleCues : MonoBehaviour
             big.Expand(new Vector3(0.4F, 0.3F, 0.4F));
             CueKit.WireBox(t.wire, big);
             CueKit.Paint(t.wire, col);
-            CueKit.Circle(t.ring, b.center, Mathf.Max(b.extents.x, b.extents.z) + 0.7F);
-            CueKit.Paint(t.ring, CueKit.Alpha(col, 0.8F));
+            if (root.Profile.groundRing)
+            {
+                CueKit.Circle(t.ring, b.center, Mathf.Max(b.extents.x, b.extents.z) + 0.7F);
+                CueKit.Paint(t.ring, CueKit.Alpha(col, 0.8F));
+            }
+            else CueKit.Hide(t.ring);
             CueKit.Hide(t.segment);
         }
 
         // --- worker: where will they be in the next seconds ---
-        if (IsDynamic(h) && t.vel.magnitude > 0.25F)
+        if (IsDynamic(h) && root.Profile.workerMotionArrow && t.vel.magnitude > 0.25F)
         {
             Vector3 p0 = CueKit.OnSurface(h.transform.position, 0.08F);
             Vector3 d = t.vel.normalized, side = Vector3.Cross(Vector3.up, d);

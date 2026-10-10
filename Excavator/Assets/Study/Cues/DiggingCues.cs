@@ -78,12 +78,12 @@ public class DiggingCues : MonoBehaviour
         if (root == null || root.M == null) return;
         bool op = root.Visible && !root.Ctl.IsTravelMode && Digger != null && Digger.HasZone;
 
-        bool wantArea = op && AttentionCues.DigAreaCues;
+        bool wantArea = op && root.DigAreaOn;
         if (wantArea != areaShown) { areaShown = wantArea; AttentionCues.LogCue(wantArea, "dig_area", ""); }
         if (wantArea) DrawArea(); else HideArea();
 
         bool loaded = load != null && load.IsLoaded;
-        bool wantTraj = op && AttentionCues.BucketTrajectoryCues && !loaded && UpdatePlan();
+        bool wantTraj = op && root.TrajectoryOn && !loaded && UpdatePlan();
         if (wantTraj != trajShown) { trajShown = wantTraj; AttentionCues.LogCue(wantTraj, "bucket_trajectory", wantTraj ? EntryText() : ""); }
         if (wantTraj) DrawTrajectory(); else HideTrajectory();
     }

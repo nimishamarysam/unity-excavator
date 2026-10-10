@@ -41,6 +41,11 @@ public class DrivingCues : MonoBehaviour
     Color bannerColor = CueKit.Guide;
     bool reverse, slowForWorker;
 
+    // Static obstacles within this distance of the path count as "near the path" (for the obstacle cue filter).
+    public float nearPathDistance = 2.5F;
+    public readonly HashSet<Hazard> NearPath = new HashSet<Hazard>();
+    public bool HasPath => shown && path.Count > 1;
+
     LineRenderer band, endRing;
     readonly List<LineRenderer> chevrons = new List<LineRenderer>();
     ScreenBox bannerBox;
@@ -74,7 +79,7 @@ public class DrivingCues : MonoBehaviour
         if (root == null || root.M == null) return;
         List<Vector3> route = null;
         bool rev = false;
-        bool want = root.Visible && AttentionCues.DrivingPathCues && root.Ctl.IsTravelMode && root.Scenario != null &&
+        bool want = root.Visible && root.DrivingPathOn && root.Ctl.IsTravelMode && root.Scenario != null &&
                     (route = root.Scenario.RouteAhead(out rev)) != null && route.Count > 0;
         if (want != shown)
         {
@@ -175,6 +180,16 @@ public class DrivingCues : MonoBehaviour
                 }
             }
             else { path.Add(CueKit.OnSurface(pts[0], lift)); cum.Add(0F); }
+        }
+
+        // Static obstacles close to the path (used by the obstacle cue filter).
+        NearPath.Clear();
+        foreach (var o in obstacles)
+        {
+            Vector3 p = CueKit.Flat(o.GetComponent<Collider>().bounds.center);
+            float lim = halfWidth + nearPathDistance;
+            for (int i = 0; i < path.Count; i++)
+                if ((CueKit.Flat(path[i]) - p).magnitude < lim) { NearPath.Add(o); break; }
         }
 
         // Workers on or about to walk onto the path.
@@ -287,6 +302,8 @@ public class DrivingCues : MonoBehaviour
 
     void Set(string text, string code, Color c)
     {
+        // Profiles without the steering banner only show (and log) the worker warnings.
+        if (!root.Profile.steeringBanner && code != "STOP_WORKER" && code != "SLOW_WORKER") code = "NONE";
         banner = text;
         bannerColor = c;
         if (code != bannerCode)
@@ -326,11 +343,17 @@ public class DrivingCues : MonoBehaviour
         for (int i = used; i < chevrons.Count; i++) CueKit.Hide(chevrons[i]);
 
         // Pulsing ring at the end of the path (next gate / stop line).
-        CueKit.Circle(endRing, path[path.Count - 1], reverse ? 1.5F : 1.0F, lift);
-        CueKit.Paint(endRing, CueKit.Alpha(reverse ? CueKit.Look : CueKit.Guide, CueKit.Pulse(4F, 0.4F)));
+        if (root.Profile.pathEndRing)
+        {
+            CueKit.Circle(endRing, path[path.Count - 1], reverse ? 1.5F : 1.0F, lift);
+            CueKit.Paint(endRing, CueKit.Alpha(reverse ? CueKit.Look : CueKit.Guide, CueKit.Pulse(4F, 0.4F)));
+        }
+        else CueKit.Hide(endRing);
 
         // Banner at the top of the driver view, below the task panel.
         Rect view = StudyLayout.DriverView;
+        bool urgent = bannerCode.StartsWith("STOP_WORKER") || bannerCode.StartsWith("SLOW_WORKER");
+        if (!root.Profile.steeringBanner && !urgent) { bannerBox.Hide(); return; }
         Color bc = bannerColor;
         if (bannerCode.StartsWith("STOP")) bc.a = CueKit.Pulse(8F, 0.55F);
         bannerBox.ShowTag(new Vector2(view.center.x, view.yMax - 0.15F), new Vector2(0.5F, 1F), bc, banner);

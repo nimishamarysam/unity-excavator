@@ -39,12 +39,15 @@ public class PracticeScenario : Scenario
 }
 
 // EASY - DRIVING: drive through 4 gates, then reverse to a stop line.
+// Layout (tuned to be easy to drive): gates 10 m wide (machine ~3.2 m), 15-16 m apart, and only a
+// gentle zig-zag (max. ~16 degree heading change between gates), so there is room to line up for each gate.
 // Hazards: barrels near the route, a worker crossing the route, a worker walking behind while reversing.
 public class DrivingScenario : Scenario
 {
-    readonly Vector3[] gates = { new Vector3(-14, 0, -4), new Vector3(0, 0, 3), new Vector3(14, 0, -3), new Vector3(30, 0, 0) };
+    const float GateWidth = 10F;      // distance between the two posts (was 7 m)
+    readonly Vector3[] gates = { new Vector3(-16, 0, -2.5F), new Vector3(0, 0, 1.5F), new Vector3(16, 0, -1.5F), new Vector3(31, 0, 0) };
     static readonly Vector3 start = new Vector3(-32, 0, -2);
-    Vector3 stopLine = new Vector3(23, 0, 0);
+    Vector3 stopLine = new Vector3(22, 0, 0);
     int nextGate;
     bool reversing;
     float stillTime;
@@ -62,19 +65,20 @@ public class DrivingScenario : Scenario
         for (int i = 0; i < gates.Length; i++)
         {
             Vector3 from = i == 0 ? start : gates[i - 1];
-            WorldBuilder.Gate(Root, "Gate" + (i + 1), WorldBuilder.OnGround(gates[i]), gates[i] - from, 7F);
+            WorldBuilder.Gate(Root, "Gate" + (i + 1), WorldBuilder.OnGround(gates[i]), gates[i] - from, GateWidth);
         }
         WorldBuilder.GroundMark(Root, "StopLine", WorldBuilder.OnGround(stopLine), 0.5F, 6F, 90F, WorldBuilder.Yellow);
 
-        // Barrels close to the ideal line (small random shift per trial).
-        WorldBuilder.Barrel(Root, "Barrel1", WorldBuilder.OnGround(new Vector3(-6.5F + Rand(-1, 1), 0, 2.0F + Rand(-0.3F, 0.3F))));
-        WorldBuilder.Barrel(Root, "Barrel2", WorldBuilder.OnGround(new Vector3(8F + Rand(-1, 1), 0, 2.4F + Rand(-0.3F, 0.3F))));
-        WorldBuilder.Barrel(Root, "Barrel3", WorldBuilder.OnGround(new Vector3(21F + Rand(-1, 1), 0, -4.0F + Rand(-0.3F, 0.3F))));
+        // Barrels beside the ideal line, about 2.7-3 m from it (small random shift per trial):
+        // the machine passes them with ~1 m to spare if it stays on the line.
+        WorldBuilder.Barrel(Root, "Barrel1", WorldBuilder.OnGround(new Vector3(-8F + Rand(-1, 1), 0, 2.2F + Rand(-0.3F, 0.3F))));
+        WorldBuilder.Barrel(Root, "Barrel2", WorldBuilder.OnGround(new Vector3(6F + Rand(-1, 1), 0, 2.8F + Rand(-0.3F, 0.3F))));
+        WorldBuilder.Barrel(Root, "Barrel3", WorldBuilder.OnGround(new Vector3(25.5F + Rand(-1, 1), 0, -3.6F + Rand(-0.3F, 0.3F))));
 
         // Workers are created now but stay hidden until their moment.
-        crosser = WorldBuilder.Worker(Root, "WorkerCrossing", new Vector3(7, 0, -13));
+        crosser = WorldBuilder.Worker(Root, "WorkerCrossing", new Vector3(10.5F, 0, -13));
         crosser.Hide();
-        behind = WorldBuilder.Worker(Root, "WorkerBehind", new Vector3(24.5F, 0, 9));
+        behind = WorldBuilder.Worker(Root, "WorkerBehind", new Vector3(23.5F, 0, 9));
         behind.Hide();
     }
 
@@ -85,8 +89,14 @@ public class DrivingScenario : Scenario
 
         if (!reversing)
         {
+            // A gate counts as passed when the machine centre crosses the line between the posts
+            // (anywhere between them), not only near the middle - the gate is wider now.
             Vector3 g = gates[nextGate];
-            if (new Vector2(c.x - g.x, c.z - g.z).magnitude < 3.5F)
+            Vector3 from = nextGate == 0 ? start : gates[nextGate - 1];
+            Vector3 dir = g - from; dir.y = 0F; dir.Normalize();
+            Vector3 rel = c - g; rel.y = 0F;
+            float along = Vector3.Dot(rel, dir), across = Vector3.Dot(rel, Vector3.Cross(Vector3.up, dir));
+            if (along >= 0F && along < 4F && Mathf.Abs(across) < GateWidth / 2F)
             {
                 StudyLogger.Log("gate_passed", (nextGate + 1).ToString());
                 if (nextGate == 0) crosserAt = t + Rand(0.5F, 3.5F);
@@ -105,7 +115,7 @@ public class DrivingScenario : Scenario
         {
             crosserAt = -1F;
             bool fromNorth = Rng.NextDouble() < 0.5;
-            float x = 7F + Rand(-1.5F, 1.5F);
+            float x = 10.5F + Rand(-1.5F, 1.5F);   // between barrel 2 and gate 3
             crosser.Appear(new Vector3(x, 0, fromNorth ? 13 : -13));
             crosser.WalkTo(new Vector3(x, 0, 0), 3F);
             crosser.WalkTo(new Vector3(x, 0, fromNorth ? -13 : 13));
@@ -116,7 +126,7 @@ public class DrivingScenario : Scenario
         if (behindAt > 0 && t >= behindAt)
         {
             behindAt = -1F;
-            float x = 24.5F + Rand(-1F, 1F);
+            float x = 23.5F + Rand(-1F, 1F);   // just in front of the stop line
             behind.Appear(new Vector3(x, 0, 10));
             behind.WalkTo(new Vector3(x, 0, 0), 4F);
             behind.WalkTo(new Vector3(x, 0, -10));

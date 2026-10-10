@@ -11,6 +11,9 @@ using UnityEngine.UI;
 //   Operation mode (digging, carrying,
 //   dumping):                            BIRD'S-EYE | OVER BUCKET | BUCKET SIDE
 //
+// DRIVING scenario (UseDrivingLayout): only ONE fixed window, the bird's-eye view in the top half
+// of the panel. The bottom half is the obstacle camera, shown by PopupViews only when something is close.
+//
 // Side cameras are fixed to the tracks and look down along each side of the machine.
 // Every window has a label so the participant knows what it shows.
 // ---------------------------------------------------------------------------
@@ -33,7 +36,18 @@ public class ContextViews : MonoBehaviour
     public float wideFieldOfView = 55F;
 
     ExcavatorController ctl;
-    readonly Window[] slots = new Window[3];
+    Window[] slots;
+    bool drivingLayout;
+
+    // True in the driving scenario: bird's-eye (top) + obstacle camera on proximity (bottom).
+    public static bool UseDrivingLayout
+    {
+        get
+        {
+            var sm = StudyManager.Instance;
+            return sm != null && sm.CurrentTrial.scenario == StudyScenario.Easy_Driving;
+        }
+    }
 
     // One camera + its frame and label.
     class Window
@@ -50,9 +64,13 @@ public class ContextViews : MonoBehaviour
     public void Init(ExcavatorController controller)
     {
         ctl = controller;
-        for (int i = 0; i < 3; i++)
+        drivingLayout = UseDrivingLayout;
+        int n = drivingLayout ? 1 : 3;
+        slots = new Window[n];
+        for (int i = 0; i < n; i++)
         {
-            slots[i] = MakeWindow("Slot" + (i + 1), StudyLayout.PanelSlot(i), 50 + i);
+            Rect r = drivingLayout ? StudyLayout.PanelSlot(0, 2) : StudyLayout.PanelSlot(i);
+            slots[i] = MakeWindow("Slot" + (i + 1), r, 50 + i);
             Show(slots[i], false);
         }
     }
@@ -136,6 +154,13 @@ public class ContextViews : MonoBehaviour
         var sm = StudyManager.Instance;
         bool show = sm != null && sm.ShowContextViews && ctl != null && ctl.Machine != null &&
                     (sm.CurrentState == StudyManager.State.Running || sm.CurrentState == StudyManager.State.Paused);
+        if (drivingLayout)
+        {
+            Show(slots[0], show);
+            if (show) Place(slots[0], ContextView.BirdsEye, LabelFor(ContextView.BirdsEye));
+            return;
+        }
+
         bool travel = ctl != null && ctl.IsTravelMode;
         var set = travel ? TravelSet : OperationSet;
         for (int i = 0; i < 3; i++)

@@ -32,6 +32,9 @@ public class AttentionCues : MonoBehaviour
 
     public static AttentionCues Instance { get; private set; }
 
+    // Which cues (and how much detail) the current scenario shows. Chosen in Init from the scenario.
+    public CueProfile Profile { get; private set; } = new CueProfile();
+
     public ExcavatorController Ctl { get; private set; }
     public Excavator M => Ctl != null ? Ctl.Machine : null;
     public Scenario Scenario { get; private set; }
@@ -39,6 +42,7 @@ public class AttentionCues : MonoBehaviour
     public Transform CanvasRoot { get; private set; }   // parent of all driver-view cue objects
     public Font Font { get; private set; }
     public ObstacleCues Obstacles { get; private set; }
+    public DrivingCues Driving { get; private set; }
 
     // Written by DrivingCues: which side to pass an obstacle on. Shown in that obstacle's label.
     public readonly Dictionary<Hazard, string> PassAdvice = new Dictionary<Hazard, string>();
@@ -61,6 +65,8 @@ public class AttentionCues : MonoBehaviour
         Ctl = controller;
         Scenario = scenario;
         Font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        Profile = CueProfile.For(StudyManager.Instance != null ? StudyManager.Instance.CurrentTrial.scenario : StudyScenario.Practice);
+        StudyLogger.Log("cue_profile", Profile.name);
 
         var w = new GameObject("CueWorld");
         w.transform.SetParent(transform, false);
@@ -73,7 +79,8 @@ public class AttentionCues : MonoBehaviour
 
         Obstacles = gameObject.AddComponent<ObstacleCues>();
         Obstacles.Init(this);
-        gameObject.AddComponent<DrivingCues>().Init(this);
+        Driving = gameObject.AddComponent<DrivingCues>();
+        Driving.Init(this);
         gameObject.AddComponent<DiggingCues>().Init(this);
 
         WorldRoot.gameObject.SetActive(false);
@@ -92,9 +99,61 @@ public class AttentionCues : MonoBehaviour
         StudyLogger.Log(v ? "cues_enabled" : "cues_disabled");
     }
 
+    // Combined check: experiment switch AND scenario profile.
+    public bool StaticOn => StaticObstacleCues && Profile.staticObstacles;
+    public bool DynamicOn => DynamicObstacleCues && Profile.dynamicObstacles;
+    public bool DigAreaOn => DigAreaCues && Profile.digArea;
+    public bool TrajectoryOn => BucketTrajectoryCues && Profile.trajectory;
+    public bool DrivingPathOn => DrivingPathCues && Profile.drivingPath;
+
     // Logs a cue appearing or disappearing, e.g. cue_on static_obstacle;Barrel1;dist=4.20
     public static void LogCue(bool on, string type, string detail)
     {
         StudyLogger.Log(on ? "cue_on" : "cue_off", type + ";" + detail);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CUE PROFILE: what each scenario shows in C3. The defaults are the full set; a scenario
+// profile switches off what is not needed for that task, to keep the screen readable.
+// ---------------------------------------------------------------------------
+public class CueProfile
+{
+    public string name = "full";
+
+    // Which cue types
+    public bool staticObstacles = true, dynamicObstacles = true, drivingPath = true, digArea = true, trajectory = true;
+
+    // Obstacle cue detail
+    public bool obstaclesOnlyNearPath = false;   // static obstacles: only those close to the planned path (or at warning level)
+    public bool gatePostsOnlyAtWarning = false;  // gate posts: only at warning distance
+    public bool workerMotionText = true;         // "WALKING LEFT" etc. in the worker label
+    public bool workerMotionArrow = true;        // ground arrow of the worker's next 2 s (context views)
+    public bool groundRing = true;               // ring on the ground around obstacles (context views)
+    public bool edgeMarkersForAll = true;        // false = edge markers only for workers at warning level
+
+    // Driving cue detail
+    public bool steeringBanner = true;           // false = banner only for STOP / SLOW (workers)
+    public bool pathEndRing = true;
+
+    public static CueProfile For(StudyScenario s)
+    {
+        switch (s)
+        {
+            case StudyScenario.Easy_Driving:
+                // Driving: (1) static obstacle box + highlight, (2) worker box that follows the worker,
+                // with walking direction and ground arrow, (3) path with directions and the steering /
+                // reverse banner. Edge markers for objects out of view. No digging cues, no ground
+                // rings, no end-of-path ring; static obstacles only near the path, gate posts only when close.
+                return new CueProfile
+                {
+                    name = "driving",
+                    digArea = false, trajectory = false,
+                    obstaclesOnlyNearPath = true, gatePostsOnlyAtWarning = true,
+                    groundRing = false, pathEndRing = false,
+                };
+            default:
+                return new CueProfile();
+        }
     }
 }
