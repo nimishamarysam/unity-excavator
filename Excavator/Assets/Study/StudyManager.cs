@@ -75,6 +75,7 @@ public class StudyManager : MonoBehaviour
         StudyLogger.Instance.OpenSession(id);
         StudyLogger.Log("session_start",
             "order=" + string.Join(" ", Array.ConvertAll(StudyDesign.ConditionOrder(id), c => c.ToString())));
+        StudyLogger.Log("trial_order", string.Join(" ", trials.ConvertAll(t => t.condition + "/" + t.scenario)));
         NextTrial();
     }
 
@@ -280,12 +281,18 @@ public static class StudyBootstrap
     static void Boot()
     {
         if (!Enabled || StudyManager.Instance != null) return;
+
+        // Always write numbers with a dot (1.25), whatever the computer's language setting is.
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
         if (UnityEngine.Object.FindFirstObjectByType<ExcavatorController>() == null) return;
 
         var go = new GameObject("StudySystems");
         UnityEngine.Object.DontDestroyOnLoad(go);
         go.AddComponent<StudyLogger>();
         go.AddComponent<StudyManager>();
+        go.AddComponent<StudyLayout>();
         go.AddComponent<MeasurementBar>();
+        go.AddComponent<ScenarioRunner>();
     }
 }

@@ -38,7 +38,7 @@ public static class StudyDesign
         new[] { StudyCondition.C3_AttentionGuided, StudyCondition.C1_Baseline, StudyCondition.C2_ContextAware },
     };
 
-    // Scenarios always run easy -> moderate -> hard inside each condition block.
+    // The three scenarios. Their order is shuffled per condition block (see BuildTrials).
     static readonly StudyScenario[] scenarioOrder =
     {
         StudyScenario.Easy_Driving, StudyScenario.Moderate_Digging, StudyScenario.Hard_DigAndDump
@@ -60,9 +60,20 @@ public static class StudyDesign
         if (includePractice)
             trials.Add(new TrialInfo { index = index++, condition = StudyCondition.C1_Baseline, scenario = StudyScenario.Practice, seed = rng.Next() });
 
+        // Scenario order is randomised inside each condition block. A separate, participant-based
+        // random generator makes the order reproducible: the same participant number always gets the same order.
+        var orderRng = new System.Random(participantId * 7919 + 17);
         foreach (var c in ConditionOrder(participantId))
-            foreach (var s in scenarioOrder)
+        {
+            var order = (StudyScenario[])scenarioOrder.Clone();
+            for (int i = order.Length - 1; i > 0; i--)          // Fisher-Yates shuffle
+            {
+                int j = orderRng.Next(i + 1);
+                var tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+            }
+            foreach (var s in order)
                 trials.Add(new TrialInfo { index = index++, condition = c, scenario = s, seed = rng.Next() });
+        }
 
         return trials;
     }

@@ -455,10 +455,8 @@ public class Excavator
     {
         get
         {
-            Terrain terrain = Terrain.activeTerrain;
-            if (terrain == null) return BucketTipPosition.y;
-            float ground = terrain.SampleHeight(BucketTipPosition) + terrain.transform.position.y;
-            return BucketTipPosition.y - ground;
+            // Measured against the original ground surface, so digging a trench does not reset it to zero.
+            return BucketTipPosition.y - TerrainDigger.ReferenceGroundHeight(BucketTipPosition);
         }
     }
 
@@ -467,6 +465,40 @@ public class Excavator
 
     // Travel speed in km/h.
     public float SpeedKmh => rb.linearVelocity.magnitude * 3.6F;
+
+    // The cab (driver) camera, so the study layout can give it a fixed area of the screen.
+    public Camera OperatorCamera => operatorViewCamera;
+
+    // The machine's physics body (used by scenarios to place the machine at the start).
+    public Rigidbody Body => rb;
+
+    // Centre of the upper body's rotation (the swing axis).
+    public Vector3 SwingCenter => swingAxis.position;
+
+    // Direction the tracks drive when going forward, flattened to the ground plane.
+    public Vector3 ForwardFlat
+    {
+        get { Vector3 f = excavatorForwardAxis.right; f.y = 0F; return f.normalized; }
+    }
+
+    // Bucket hinge point (where the bucket joins the arm) and the bucket itself.
+    public Vector3 BucketPivotPosition => bucketAxis.position;
+    public Transform BucketTransform => bucketAxis;
+
+    // Rough maximum horizontal reach from the swing centre to the bucket teeth, in metres.
+    public float MaxReach
+    {
+        get
+        {
+            Vector3 a = swingAxis.position, b = bodyBoomJoint.position;
+            a.y = 0F; b.y = 0F;
+            return (b - a).magnitude + boomLength + armLength + (bucketCuttingEdges.position - armBucketJoint.position).magnitude;
+        }
+    }
+
+    // All solid colliders of the machine, and only the two tracks.
+    public Collider[] AllColliders => excavator.GetComponentsInChildren<Collider>();
+    public Collider[] TrackColliders => new Collider[] { leftTrack.GetComponent<Collider>(), rightTrack.GetComponent<Collider>() };
 
     public Transform transform
     {

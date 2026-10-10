@@ -1,0 +1,63 @@
+using UnityEngine;
+
+// ---------------------------------------------------------------------------
+// STUDY SCREEN LAYOUT (identical in all three conditions)
+//
+//   +----------------------------------+-------------+
+//   |                                  |  camera 1   |
+//   |        DRIVER VIEW (cab)         |-------------|
+//   |                                  |  camera 2   |
+//   |                                  |-------------|
+//   |                                  |  camera 3   |
+//   +----------------------------------+-------------+
+//   |            measurement bar (full width)        |
+//   +------------------------------------------------+
+//
+// The camera panel on the right is used only in C2/C3; in C1 it stays empty.
+// Keeping the driver view the same size in every condition avoids giving one
+// condition a bigger "windshield" than another.
+// All values are fractions of the screen (0..1), designed for a 16:9 screen.
+// ---------------------------------------------------------------------------
+
+public class StudyLayout : MonoBehaviour
+{
+    public const float BarHeight = 72F / 1080F;     // measurement bar (same as MeasurementBar.barHeight)
+    public const float PanelWidth = 0.28F;           // right-hand camera panel
+    public const float Gap = 0.006F;
+
+    public static Rect DriverView => new Rect(0F, BarHeight, 1F - PanelWidth, 1F - BarHeight);
+
+    // Camera slot 0 = top, 1 = middle, 2 = bottom.
+    public static Rect PanelSlot(int i)
+    {
+        float x = 1F - PanelWidth + Gap, w = PanelWidth - 2F * Gap;
+        float h = (1F - BarHeight - 4F * Gap) / 3F;
+        float y = 1F - Gap - (i + 1) * h - i * Gap;
+        return new Rect(x, y, w, h);
+    }
+
+    Camera background;
+
+    void Awake()
+    {
+        // A camera that draws nothing but a dark background, behind everything,
+        // so the panel area is a clean dark surface when no camera window is shown.
+        var go = new GameObject("LayoutBackground");
+        go.transform.SetParent(transform, false);
+        background = go.AddComponent<Camera>();
+        background.depth = -100;
+        background.clearFlags = CameraClearFlags.SolidColor;
+        background.backgroundColor = new Color(0.10F, 0.11F, 0.12F);
+        background.cullingMask = 0;
+    }
+
+    void LateUpdate()
+    {
+        // Give the cab camera its fixed area (re-applied after every scene reload).
+        var sm = StudyManager.Instance;
+        var cam = sm != null && sm.Controller != null && sm.Controller.Machine != null ? sm.Controller.Machine.OperatorCamera : null;
+        if (cam == null) return;
+        Rect r = DriverView;
+        if (cam.rect != r) cam.rect = r;
+    }
+}

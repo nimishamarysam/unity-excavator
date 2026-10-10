@@ -21,6 +21,9 @@ public abstract class Scenario : MonoBehaviour
     public abstract string TaskText { get; }
     public virtual string ProgressText => "";
 
+    // Where loaded soil should go (truck bed or spoil square), or null if the scenario has no dumping.
+    public virtual Vector3? DumpTarget => null;
+
     public void Setup(ExcavatorController ctl, TrialInfo trial)
     {
         Ctl = ctl; M = ctl.Machine; Trial = trial;
@@ -126,6 +129,9 @@ public class ScenarioRunner : MonoBehaviour
         }
         current.Setup(sm.Controller, trial);
         go.AddComponent<HazardTracker>().Init(sm.Controller);   // after Setup, so it sees the final collider set
+        go.AddComponent<ContextMonitor>().Init(sm.Controller, current);
+        go.AddComponent<ContextViews>().Init(sm.Controller);    // only visible in C2 and C3
+        go.AddComponent<PopupViews>().Init(sm.Controller);      // C2/C3, travel mode, when ContextViews.PopupStyleForDriving
         StudyLogger.Log("scenario_ready", trial.scenario.ToString());
     }
 

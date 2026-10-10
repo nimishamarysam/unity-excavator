@@ -135,7 +135,7 @@ public class ExcavatorController : MonoBehaviour
     void Update()
     {
         // Study change: ignore the mode button while the simulation is frozen (setup, briefing, questionnaire).
-        if (Time.timeScale == 0F) return;
+        if (Time.timeScale == 0F || excavator == null) return;
 
         bool modeChange = input.ModeTogglePressedThisFrame();
 
@@ -174,6 +174,10 @@ public class ExcavatorController : MonoBehaviour
 
     void FixedUpdate()
     {
+        // Study change: if Start() failed, the excavator was never created. Stop here instead of
+        // throwing an error every physics step; the FIRST red error in the Console shows the real cause.
+        if (excavator == null) return;
+
         excavator.OrientHook();  // TODO: add hook operations
 
         //--- Code for autonomous operations from this line ---

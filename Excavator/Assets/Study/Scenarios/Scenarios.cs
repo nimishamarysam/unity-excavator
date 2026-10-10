@@ -15,6 +15,7 @@ public class PracticeScenario : Scenario
     int dumps;
 
     public override string TaskText => "Practice: try driving, digging and dumping";
+    public override Vector3? DumpTarget => spoil;
     public override string ProgressText => $"Dig in the brown square, dump on the white square.  Dumps: {dumps}";
 
     protected override void Build()
@@ -26,7 +27,6 @@ public class PracticeScenario : Scenario
 
         Vector3 pit = Rel(0.6F * reach, 0);
         TerrainDigger.Instance.SetZone(pit, f, 3F, 3F, 1.5F);
-        TerrainDigger.Instance.EndlessSoil = true;
         Outline("dig", pit, f, 3F, 3F, BucketLoad.SoilMaterial().color);
 
         spoil = Rel(0, 0.6F * reach);
@@ -145,6 +145,7 @@ public class DiggingScenario : Scenario
     bool overDigArmed = true;
 
     public override string TaskText => $"Dig the trench between the stakes to {TargetDepth:0.0} m deep";
+    public override Vector3? DumpTarget => spoil;
     public override string ProgressText =>
         $"Trench done: {TerrainDigger.Instance.FractionDugTo(TargetDepth) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
         "Dump soil on the white square. Do not dig near the orange cable markers.";
@@ -228,6 +229,7 @@ public class DigDumpScenario : Scenario
     float reach;
 
     public override string TaskText => $"Load the truck {Goal} times";
+    public override Vector3? DumpTarget => bedCenter;
     public override string ProgressText
     {
         get
@@ -247,7 +249,6 @@ public class DigDumpScenario : Scenario
 
         Vector3 pit = Rel(0.6F * reach, 0);
         TerrainDigger.Instance.SetZone(pit, f, 3F, 3F, 2F);
-        TerrainDigger.Instance.EndlessSoil = true;
         Outline("pit", pit, f, 3F, 3F, BucketLoad.SoilMaterial().color);
 
         // Truck to the left (90 degree swing), bed level with the swing centre.

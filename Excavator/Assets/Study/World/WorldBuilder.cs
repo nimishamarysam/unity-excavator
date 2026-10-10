@@ -56,16 +56,17 @@ public static class WorldBuilder
         return Shape(PrimitiveType.Cube, parent, name, center, new Vector3(width, 0.04F, length), color, yaw, false, 0.03F);
     }
 
-    // A route gate: two striped posts with a bar on top.
+    // A route gate: two posts with a bar on top. The bar is 6 m up so it stays
+    // above the driver's line of sight from the cab when driving through.
     public static void Gate(Transform parent, string name, Vector3 center, Vector3 direction, float width)
     {
         Vector3 side = Vector3.Cross(Vector3.up, direction.normalized) * (width / 2F);
         float yaw = Quaternion.LookRotation(direction).eulerAngles.y;
-        var l = Shape(PrimitiveType.Cylinder, parent, name + "_L", center - side, new Vector3(0.25F, 1.2F, 0.25F), Orange, 0, true);
-        var r = Shape(PrimitiveType.Cylinder, parent, name + "_R", center + side, new Vector3(0.25F, 1.2F, 0.25F), Orange, 0, true);
+        var l = Shape(PrimitiveType.Cylinder, parent, name + "_L", center - side, new Vector3(0.25F, 3.1F, 0.25F), Orange, 0, true);
+        var r = Shape(PrimitiveType.Cylinder, parent, name + "_R", center + side, new Vector3(0.25F, 3.1F, 0.25F), Orange, 0, true);
         AddHazard<ColliderHazard>(l, name + "_post_L", HazardKind.Obstacle, 1.5F, 0.15F);
         AddHazard<ColliderHazard>(r, name + "_post_R", HazardKind.Obstacle, 1.5F, 0.15F);
-        Shape(PrimitiveType.Cube, parent, name + "_bar", center, new Vector3(width, 0.25F, 0.25F), White, yaw, false, 2.5F);
+        Shape(PrimitiveType.Cube, parent, name + "_bar", center, new Vector3(width, 0.3F, 0.3F), White, yaw, false, 6F);
     }
 
     // A barrel obstacle.

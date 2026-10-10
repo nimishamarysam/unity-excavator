@@ -33,6 +33,9 @@ public abstract class Hazard : MonoBehaviour
     public enum Level { Clear, Warning, Contact }
     public Level CurrentLevel { get; set; } = Level.Clear;
     public float CurrentDistance { get; set; } = float.MaxValue;
+    // The two closest points (on the machine and on the hazard), updated with CurrentDistance.
+    public Vector3 MachinePoint { get; set; }
+    public Vector3 HazardPoint { get; set; }
 
     // Closest point of this hazard to a world position.
     public abstract Vector3 ClosestPointTo(Vector3 p);
@@ -167,7 +170,9 @@ public class HazardTracker : MonoBehaviour
     float Distance(Hazard h)
     {
         Vector3 tip = machine.BucketTipPosition;
-        float best = (h.ClosestPointTo(tip) - tip).magnitude;
+        Vector3 hp0 = h.ClosestPointTo(tip);
+        float best = (hp0 - tip).magnitude;
+        h.MachinePoint = tip; h.HazardPoint = hp0;
         if (h.measure == HazardMeasure.BucketTeethOnly) return best;
 
         var cols = h.measure == HazardMeasure.TracksOnly ? tracks : all;
@@ -180,7 +185,8 @@ public class HazardTracker : MonoBehaviour
             Vector3 q = c.ClosestPoint(p);
             p = h.ClosestPointTo(q);
             q = c.ClosestPoint(p);
-            best = Mathf.Min(best, (p - q).magnitude);
+            float d = (p - q).magnitude;
+            if (d < best) { best = d; h.MachinePoint = q; h.HazardPoint = p; }
         }
         return best;
     }
