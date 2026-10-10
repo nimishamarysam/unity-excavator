@@ -4,7 +4,10 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/Excavator.unity
+    guid: 3fb80b72a23a74a43ad9372e8b8371b5
   m_configObjects:
     com.unity.input.settings: {fileID: 11400000, guid: f53030b3367364457a354f455b62f740,
       type: 2}

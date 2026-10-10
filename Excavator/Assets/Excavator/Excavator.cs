@@ -401,8 +401,9 @@ public class Excavator
         }
         else
         {
-            mainCamera.rect = new Rect(0F, 0F, 0.5F, 1F);
-            operatorViewCamera.rect = new Rect(0.5F, 0F, 0.5F, 1F);
+            // Study change: the cab (operator) view fills the whole screen.
+            // The original left-half view came from the FreeLookCameraRig prefab, which is missing from the repo.
+            operatorViewCamera.rect = new Rect(0F, 0F, 1F, 1F);
         }
 
         // Set the center of mass of the excavator's Rigidbody to a lower position for better stability
@@ -443,6 +444,29 @@ public class Excavator
         OrientLinkage(bucketLinkageAxis, bucketCylinder1Target, arm.transform.forward);
         OrientHydraulicCylinder(bucketCylinderAxis1, bucketCylinder1Target, bucketCylinderAxis2, bucketCylinder2Target, boom.transform.right);
     }
+
+    // --- Study additions: read-only values for the measurement bar and context monitor ---
+
+    // World position of the bucket's cutting edge (the teeth).
+    public Vector3 BucketTipPosition => bucketCuttingEdges.position;
+
+    // Height of the bucket teeth above the terrain surface in metres (negative = below ground).
+    public float BucketHeightAboveGround
+    {
+        get
+        {
+            Terrain terrain = Terrain.activeTerrain;
+            if (terrain == null) return BucketTipPosition.y;
+            float ground = terrain.SampleHeight(BucketTipPosition) + terrain.transform.position.y;
+            return BucketTipPosition.y - ground;
+        }
+    }
+
+    // How far the upper body is tilted away from vertical, in degrees (0 = level).
+    public float TiltAngle => Vector3.Angle(swingAxis.up, Vector3.up);
+
+    // Travel speed in km/h.
+    public float SpeedKmh => rb.linearVelocity.magnitude * 3.6F;
 
     public Transform transform
     {
@@ -485,7 +509,6 @@ public class Excavator
         get
         {
             float angle = Vector3.SignedAngle(excavatorForwardAxis.right, swingAxis.right, swingAxis.up);
-            Debug.Log($"swing angle = {angle}");
             return angle;
         }
     }
@@ -500,7 +523,6 @@ public class Excavator
                 boomAxis.Rotate(value, 0, 0);
                 OrientBoomCylinder();
             }
-            Debug.Log($"boomAngle: {boomAngle}");
         }
         get
         {
@@ -518,7 +540,6 @@ public class Excavator
                 armAxis.Rotate(-value, 0, 0);
                 OrientArmCylinder();
             }
-            Debug.Log($"armAngle: {armAngle}");
         }
         get
         {
@@ -536,7 +557,6 @@ public class Excavator
                 bucketAxis.Rotate(value, 0, 0);
                 OrientBucketCylinder();
             }
-            Debug.Log($"bucketAngle: {bucketAngle}");
         }
         get
         {
@@ -587,7 +607,6 @@ public class Excavator
         Vector3 forwardDirection = (excavatorForwardAxis.rotation * Vector3.right).normalized;
         float force = driveParams.mass * accel;  // F = m * a
         rb.AddForceAtPosition(forwardDirection * force, transform.position, ForceMode.Force);
-        Debug.Log($"Force: {driveParams.mass * accel}");
 
         // --- Add speed limiting here ---
         float maxSpeed = driveParams.maxSpeed; // Assuming maxSpeed exists in your DriveParams struct/class
@@ -644,9 +663,7 @@ public class Excavator
             }
 
             float force = driveParams.mass * this.accel;  // F = m * a
-            Debug.Log($"accel = {this.accel}, force = {force}");
             rb.AddForceAtPosition(forwardDirection * force, transform.position, ForceMode.Force);
-            Debug.Log($"Force: {driveParams.mass * this.accel}");
 
             return true;
         }
@@ -842,7 +859,6 @@ public class Excavator
                 swingAngle = Mathf.Lerp(currentSwingAngle, p.D, t);
                 boomAngle = Mathf.Lerp(currentBoomAngle, Adash, t);
                 armAngle = Mathf.Lerp(currentArmAngle, Bdash, t);
-                Debug.Log($"IK: swing={swingAngle}, boom={boomAngle}, arm={armAngle}, bucket={bucketAngle}");
                 yield return new WaitForFixedUpdate();
             }
 

@@ -108,6 +108,20 @@ public class ExcavatorController : MonoBehaviour
 
     public bool useHook = false;
 
+    // --- Study additions ---
+    // When false, the keyboard keys 1-6 (autonomous demo moves) are ignored.
+    // The StudyManager turns this off so participants cannot trigger them by accident.
+    public static bool AutonomousDemoEnabled = true;
+
+    // Where the controls come from (gamepad/keyboard today, real joysticks later).
+    private IExcavatorInput input = new GamepadKeyboardInput();
+    public IExcavatorInput InputSource { get => input; set => input = value; }
+
+    // Read-only access for the study scripts (measurement bar, context monitor, logger).
+    public Excavator Machine => excavator;
+    public bool IsTravelMode => travel;
+    public InputSnapshot LastInput { get; private set; }
+
     private DriveParams driveParams;
 
     private InputEvents inputEvents = new InputEvents();
@@ -120,7 +134,10 @@ public class ExcavatorController : MonoBehaviour
 
     void Update()
     {
-        bool modeChange = Gamepad.current != null && Gamepad.current.buttonEast.wasReleasedThisFrame;
+        // Study change: ignore the mode button while the simulation is frozen (setup, briefing, questionnaire).
+        if (Time.timeScale == 0F) return;
+
+        bool modeChange = input.ModeTogglePressedThisFrame();
 
         if (modeChange)
         {
@@ -131,81 +148,6 @@ public class ExcavatorController : MonoBehaviour
             travelIndicator.color = new Color(0, travelGreen, 0);
             operationIndicator.color = new Color(0, operationGreen, 0);
         }
-    }
-
-    private void ProcessGamepadEvents(InputEvents inputEvents)
-    {
-        if (!travel)
-        {
-            float joystickLeftX = Gamepad.current != null ? Gamepad.current.leftStick.x.ReadValue() : 0f;
-            if (joystickLeftX != 0)
-            {
-                inputEvents.swing = joystickLeftX;
-            }
-
-            float joystickLeftY = Gamepad.current != null ? Gamepad.current.leftStick.y.ReadValue() : 0f;
-            if (joystickLeftY != 0)
-            {
-                inputEvents.arm = joystickLeftY;
-            }
-
-            float joystickRightX = Gamepad.current != null ? Gamepad.current.rightStick.x.ReadValue() : 0f;
-
-            if (joystickRightX != 0)
-            {
-                inputEvents.bucket = joystickRightX;
-            }
-
-            float joystickRightY = Gamepad.current != null ? Gamepad.current.rightStick.y.ReadValue() : 0f;
-
-            if (joystickRightY != 0)
-            {
-                inputEvents.boom = joystickRightY;
-            }
-
-        }
-        else
-
-        {
-            float joystickLeftY = Gamepad.current != null ? Gamepad.current.leftStick.y.ReadValue() : 0f;
-
-            if (joystickLeftY != 0)
-            {
-                inputEvents.trackLeft = joystickLeftY;
-            }
-
-            float joystickRightY = Gamepad.current != null ? Gamepad.current.rightStick.y.ReadValue() : 0f;
-            if (joystickRightY != 0)
-            {
-                inputEvents.trackRight = joystickRightY;
-            }
-        }
-
-    }
-
-    private void ProcessKeyEvents(InputEvents inputEvents)
-    {
-        // Swing
-        if (Keyboard.current != null && Keyboard.current.hKey.isPressed) { inputEvents.swing = 1F; }  // Swing right
-        else if (Keyboard.current != null && Keyboard.current.fKey.isPressed) { inputEvents.swing = -1F; }  // Swing left
-
-        // Arm
-        if (Keyboard.current != null && Keyboard.current.tKey.isPressed) { inputEvents.arm = 1F; }  // Arm roll out
-        else if (Keyboard.current != null && Keyboard.current.gKey.isPressed) { inputEvents.arm = -1F; }  // Arm rool in
-
-        // Boom
-        if (Keyboard.current != null && Keyboard.current.iKey.isPressed) { inputEvents.boom = 1F; }  // Boom roll in
-        else if (Keyboard.current != null && Keyboard.current.kKey.isPressed) { inputEvents.boom = -1F; }  // Boom roll out
-
-        // Bucket
-        if (Keyboard.current != null && Keyboard.current.lKey.isPressed) { inputEvents.bucket = 1F; }  // Bucket roll out
-        else if (Keyboard.current != null && Keyboard.current.jKey.isPressed) { inputEvents.bucket = -1F; }  // Bucket roll in
-
-        // Track
-        if (Keyboard.current != null && Keyboard.current.uKey.isPressed) { inputEvents.trackRight = 1F; }  // Track right
-        else if (Keyboard.current != null && Keyboard.current.oKey.isPressed) { inputEvents.trackRight = -1F; }
-        if (Keyboard.current != null && Keyboard.current.yKey.isPressed) { inputEvents.trackLeft = 1F; }  // Track left
-        else if (Keyboard.current != null && Keyboard.current.rKey.isPressed) { inputEvents.trackLeft = -1F; }
     }
 
     // Start is called before the first frame update
@@ -236,7 +178,7 @@ public class ExcavatorController : MonoBehaviour
 
         //--- Code for autonomous operations from this line ---
 
-        if (!excavator.isInAutonomousDriving)
+        if (AutonomousDemoEnabled && !excavator.isInAutonomousDriving)
         {
             if (Keyboard.current != null && Keyboard.current.digit1Key.isPressed)
             {
@@ -308,8 +250,8 @@ public class ExcavatorController : MonoBehaviour
 
         }
 
-        ProcessKeyEvents(inputEvents);
-        ProcessGamepadEvents(inputEvents);
+        input.Read(travel, inputEvents);
+        LastInput = new InputSnapshot(inputEvents);
 
         // Control
         if (inputEvents.isUpdated)
@@ -318,7 +260,6 @@ public class ExcavatorController : MonoBehaviour
             /* Swing */
             if (inputEvents.swing != 0F)
             {
-                Debug.Log(excavator.swingAngle);
                 excavator.swingRotate(delta * 1F * inputEvents.swing);
                 leftOperationLeverAngles.leftRight = 5F * inputEvents.swing;
             }
