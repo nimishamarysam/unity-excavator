@@ -33,6 +33,8 @@ public class TerrainDigger : MonoBehaviour
     public Vector3 ZoneAxisU => axisU;
     public float ZoneHalfLength => halfU;
     public float ZoneHalfWidth => halfV;
+    public float ZoneMaxDepth => maxDepth;
+    public bool HasZone => hasZone;
 
     // Height of the ORIGINAL ground at a point (before any digging). Works even without a digger.
     public static float ReferenceGroundHeight(Vector3 p)

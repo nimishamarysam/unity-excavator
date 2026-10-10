@@ -43,6 +43,7 @@ public class PracticeScenario : Scenario
 public class DrivingScenario : Scenario
 {
     readonly Vector3[] gates = { new Vector3(-14, 0, -4), new Vector3(0, 0, 3), new Vector3(14, 0, -3), new Vector3(30, 0, 0) };
+    static readonly Vector3 start = new Vector3(-32, 0, -2);
     Vector3 stopLine = new Vector3(23, 0, 0);
     int nextGate;
     bool reversing;
@@ -56,11 +57,11 @@ public class DrivingScenario : Scenario
 
     protected override void Build()
     {
-        PlaceMachine(-32F, -2F, Vector3.right);
+        PlaceMachine(start.x, start.z, Vector3.right);
 
         for (int i = 0; i < gates.Length; i++)
         {
-            Vector3 from = i == 0 ? new Vector3(-32, 0, -2) : gates[i - 1];
+            Vector3 from = i == 0 ? start : gates[i - 1];
             WorldBuilder.Gate(Root, "Gate" + (i + 1), WorldBuilder.OnGround(gates[i]), gates[i] - from, 7F);
         }
         WorldBuilder.GroundMark(Root, "StopLine", WorldBuilder.OnGround(stopLine), 0.5F, 6F, 90F, WorldBuilder.Yellow);
@@ -131,6 +132,24 @@ public class DrivingScenario : Scenario
     }
 
     public override string Summary() => $"gates={nextGate};reached_stop={(stillTime > 1F ? 1 : 0)}";
+
+    // Route for the C3 driving cue: for every gate still to pass, a point 4 m before it, the gate
+    // itself and a point 2 m after it (so the path goes straight through the gate). When reversing: the stop line.
+    public override System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse)
+    {
+        reverse = reversing;
+        var list = new System.Collections.Generic.List<Vector3>();
+        if (reversing) { list.Add(WorldBuilder.OnGround(stopLine)); return list; }
+        for (int i = nextGate; i < gates.Length; i++)
+        {
+            Vector3 from = i == 0 ? start : gates[i - 1];
+            Vector3 d = gates[i] - from; d.y = 0F; d.Normalize();
+            list.Add(WorldBuilder.OnGround(gates[i] - d * 4F));
+            list.Add(WorldBuilder.OnGround(gates[i]));
+            list.Add(WorldBuilder.OnGround(gates[i] + d * 2F));
+        }
+        return list;
+    }
 }
 
 // MODERATE - DIGGING: dig a trench to 1.2 m, dump spoil on the white square.
@@ -146,6 +165,7 @@ public class DiggingScenario : Scenario
 
     public override string TaskText => $"Dig the trench between the stakes to {TargetDepth:0.0} m deep";
     public override Vector3? DumpTarget => spoil;
+    public override float? DigTargetDepth => TargetDepth;
     public override string ProgressText =>
         $"Trench done: {TerrainDigger.Instance.FractionDugTo(TargetDepth) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
         "Dump soil on the white square. Do not dig near the orange cable markers.";

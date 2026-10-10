@@ -24,6 +24,14 @@ public abstract class Scenario : MonoBehaviour
     // Where loaded soil should go (truck bed or spoil square), or null if the scenario has no dumping.
     public virtual Vector3? DumpTarget => null;
 
+    // For the C3 driving cue: the rest of the route as ground points in driving order
+    // (null = no route). 'reverse' = the machine should drive backwards to these points.
+    public virtual System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse) { reverse = false; return null; }
+
+    // For the C3 digging cues: target depth of the dig zone below the original ground in metres
+    // (null = use the zone's maximum depth).
+    public virtual float? DigTargetDepth => null;
+
     public void Setup(ExcavatorController ctl, TrialInfo trial)
     {
         Ctl = ctl; M = ctl.Machine; Trial = trial;
@@ -132,6 +140,7 @@ public class ScenarioRunner : MonoBehaviour
         go.AddComponent<ContextMonitor>().Init(sm.Controller, current);
         go.AddComponent<ContextViews>().Init(sm.Controller);    // only visible in C2 and C3
         go.AddComponent<PopupViews>().Init(sm.Controller);      // C2/C3, travel mode, when ContextViews.PopupStyleForDriving
+        go.AddComponent<AttentionCues>().Init(sm.Controller, current);   // only visible in C3
         StudyLogger.Log("scenario_ready", trial.scenario.ToString());
     }
 

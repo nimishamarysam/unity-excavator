@@ -98,7 +98,9 @@ public static class StudyDesign
             case StudyCondition.C2_ContextAware:
                 return "You will see the measurement bar and an extra camera view that changes to match what you are doing.";
             default:
-                return "You will see the measurement bar, the extra camera view, and warning cues that point you to hazards.";
+                return "You will see the measurement bar, the extra camera views, and guidance overlays: boxes around obstacles " +
+                       "and people, the path to drive, the dig area with the bucket position marked on the ground, " +
+                       "and a suggested bucket path for each scoop.";
         }
     }
 
