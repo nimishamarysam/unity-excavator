@@ -22,6 +22,19 @@ using UnityEngine;
 //   curl out and lift. A thin line shows how to get from the bucket's position to the entry point.
 //   The plan is frozen while a scoop is in progress and recalculated when the bucket is empty.
 //   It is hidden while the bucket is loaded (carrying/dumping).
+//   The path never goes below the target depth and keeps clear of buried services (cable, crossing pipe):
+//   near a service the bottom of the path is lifted so the teeth stay outside its warning distance.
+//   Profile option (digging): the path is drawn ONLY in the BUCKET SIDE VIEW (layer BucketSideOnlyLayer),
+//   together with the current bucket angle next to the bucket. The angle label is green when the
+//   bucket's curl matches the ideal curl for that point of the path (upright at entry, curling during
+//   the drag, fully curled at the exit), orange with "CURL MORE" / "OPEN MORE" otherwise.
+//
+// Bucket side view height arrow (profile option): a vertical double arrow between the teeth and the
+// ground below them with the height in metres; inside the trench it runs from the original ground
+// down to the teeth, shows the depth and a short tick at the target depth.
+//
+// The teeth marker (cue 3) is only shown in digging mode and when the BUCKET angle (as on the
+// measurement bar) is over markerMinBucketAngle, i.e. not while the bucket is curled up carrying soil.
 // ---------------------------------------------------------------------------
 
 public class DiggingCues : MonoBehaviour
@@ -30,6 +43,9 @@ public class DiggingCues : MonoBehaviour
     public float dragLength = 1.6F;
     public float replanSeconds = 0.6F;
     public float reachFraction = 0.85F;   // do not plan scoops further out than this share of max reach
+    public float markerMinBucketAngle = 20F;   // teeth marker only when the bucket angle is above this
+    public float serviceMargin = 0.05F;   // extra clearance kept above the warning distance of buried services
+    public float curlMatchDegrees = 15F;  // real curl within this of the ideal = green
 
     AttentionCues root;
     BucketLoad load;
@@ -37,6 +53,12 @@ public class DiggingCues : MonoBehaviour
     LineRenderer boundary, ring, ring2, cross, drop;
     LineRenderer approach, cut, entryRing;
     readonly List<LineRenderer> arrows = new List<LineRenderer>();
+    LineRenderer heightArrow, targetTick;
+    TextMesh heightText, angleText;
+    // Ideal curl keyframes: index into cutPts and angle of the teeth->pivot line from vertical,
+    // tipped towards "out" (away from the machine). 20 = bucket upright, 105 = fully curled.
+    readonly List<(int idx, float phi)> curlKeys = new List<(int, float)>();
+    Vector3 outDir = Vector3.right;
 
     bool areaShown, trajShown;
     bool hasPlan;
@@ -56,10 +78,17 @@ public class DiggingCues : MonoBehaviour
         ring2     = CueKit.Line(w, "CueTeethRing2", 0.07F, true, true);
         cross     = CueKit.Line(w, "CueTeethCross", 0.05F, true, true);
         drop      = CueKit.Line(w, "CueTeethDrop", 0.03F, true, false);
-        approach  = CueKit.Line(w, "CueTrajApproach", 0.035F, true, false);
-        cut       = CueKit.Line(w, "CueTrajCut", 0.09F, true, false);
-        entryRing = CueKit.Line(w, "CueTrajEntry", 0.06F, true, true);
-        for (int i = 0; i < 8; i++) arrows.Add(CueKit.Line(w, "CueTrajArrow", 0.06F, true, false));
+        int side = CueKit.BucketSideOnlyLayer;
+        int trajLayer = r.Profile.trajectoryInBucketSideViewOnly ? side : 0;
+        approach  = CueKit.Line(w, "CueTrajApproach", 0.035F, true, false, trajLayer);
+        cut       = CueKit.Line(w, "CueTrajCut", 0.09F, true, false, trajLayer);
+        entryRing = CueKit.Line(w, "CueTrajEntry", 0.06F, true, true, trajLayer);
+        for (int i = 0; i < 8; i++) arrows.Add(CueKit.Line(w, "CueTrajArrow", 0.06F, true, false, trajLayer));
+
+        heightArrow = CueKit.Line(w, "CueHeightArrow", 0.05F, true, false, side);
+        targetTick  = CueKit.Line(w, "CueTargetTick", 0.05F, true, false, side);
+        heightText  = MakeText(w, "CueHeightText", side, r.Font);
+        angleText   = MakeText(w, "CueAngleText", side, r.Font);
     }
 
     TerrainDigger Digger => TerrainDigger.Instance;
@@ -86,7 +115,114 @@ public class DiggingCues : MonoBehaviour
         bool wantTraj = op && root.TrajectoryOn && !loaded && UpdatePlan();
         if (wantTraj != trajShown) { trajShown = wantTraj; AttentionCues.LogCue(wantTraj, "bucket_trajectory", wantTraj ? EntryText() : ""); }
         if (wantTraj) DrawTrajectory(); else HideTrajectory();
+
+        if (op && root.Profile.bucketSideHeightArrow && ContextViews.BucketSideCamera != null && BucketInDigArea()) DrawHeightArrow();
+        else HideHeightArrow();
     }
+
+    // ---------- bucket side view: height / depth arrow ----------
+
+    // Only while digging: teeth over the dig area (0.3 m margin) and lower than 1.5 m above the original
+    // ground (same rule as the "Digging" phase of the ContextMonitor, without its 0.5 s delay).
+    bool BucketInDigArea()
+    {
+        Vector3 tip = root.M.BucketTipPosition;
+        return Digger.Contains(tip, 0.3F) && tip.y - TerrainDigger.ReferenceGroundHeight(tip) < 1.5F;
+    }
+
+    void DrawHeightArrow()
+    {
+        var m = root.M;
+        var cam = ContextViews.BucketSideCamera;
+        Vector3 tip = m.BucketTipPosition;
+        float refY = TerrainDigger.ReferenceGroundHeight(tip);
+        float curY = TerrainDigger.CurrentGroundHeight(tip);
+
+        // Draw the arrow just in front of the teeth (towards the camera) so the bucket does not hide it.
+        Vector3 toCam = cam.transform.position - tip; toCam.y = 0F;
+        Vector3 off = toCam.sqrMagnitude > 0.01F ? toCam.normalized * 0.5F : Vector3.zero;
+        Vector3 top, bottom;
+        string txt; Color c;
+        if (tip.y >= refY)
+        {   // above the ground: arrow from the teeth down to the ground below them
+            top = tip + off;
+            bottom = new Vector3(tip.x, Mathf.Min(curY, tip.y), tip.z) + off;
+            txt = $"{tip.y - curY:0.00} m";
+            c = CueKit.Guide;
+            CueKit.Hide(targetTick);
+        }
+        else
+        {   // in the trench: arrow from the original ground down to the teeth, with the target depth tick
+            float depth = refY - tip.y, target = TargetDepth;
+            top = new Vector3(tip.x, refY, tip.z) + off;
+            bottom = tip + off;
+            c = depth > target + 0.25F ? CueKit.Danger : depth >= target - 0.12F ? CueKit.Good : CueKit.Guide;
+            txt = $"{depth:0.00} m deep\ntarget {target:0.00}";
+            Vector3 t = new Vector3(tip.x, refY - target, tip.z) + off;
+            Vector3 across = Vector3.Cross(Vector3.up, toCam.sqrMagnitude > 0.01F ? toCam.normalized : Vector3.forward);
+            targetTick.loop = false;
+            targetTick.positionCount = 2;
+            targetTick.SetPosition(0, t - across * 0.35F);
+            targetTick.SetPosition(1, t + across * 0.35F);
+            CueKit.Paint(targetTick, CueKit.Bright);
+        }
+
+        // Double-headed vertical arrow.
+        Vector3 side = Vector3.Cross(Vector3.up, off.sqrMagnitude > 0F ? off.normalized : Vector3.forward) * 0.12F;
+        heightArrow.loop = false;
+        heightArrow.positionCount = 8;
+        heightArrow.SetPosition(0, top - Vector3.up * 0.18F + side);
+        heightArrow.SetPosition(1, top);
+        heightArrow.SetPosition(2, top - Vector3.up * 0.18F - side);
+        heightArrow.SetPosition(3, top);
+        heightArrow.SetPosition(4, bottom);
+        heightArrow.SetPosition(5, bottom + Vector3.up * 0.18F + side);
+        heightArrow.SetPosition(6, bottom);
+        heightArrow.SetPosition(7, bottom + Vector3.up * 0.18F - side);
+        CueKit.Paint(heightArrow, c);
+
+        PlaceText(heightText, cam, (top + bottom) / 2F + off * 0.6F, txt, c);
+    }
+
+    void HideHeightArrow()
+    {
+        CueKit.Hide(heightArrow);
+        CueKit.Hide(targetTick);
+        HideText(heightText);
+    }
+
+    // ---------- small world-space text (drawn on top, facing the given camera) ----------
+
+    static TextMesh MakeText(Transform parent, string name, int layer, Font font)
+    {
+        var go = new GameObject(name) { layer = layer };
+        go.transform.SetParent(parent, false);
+        var tm = go.AddComponent<TextMesh>();
+        tm.font = font;
+        tm.fontSize = 48;
+        tm.characterSize = 0.035F;
+        tm.anchor = TextAnchor.MiddleLeft;
+        tm.fontStyle = FontStyle.Bold;
+        var mr = go.GetComponent<MeshRenderer>();
+        mr.sharedMaterial = font.material;
+        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        go.SetActive(false);
+        return tm;
+    }
+
+    static void PlaceText(TextMesh tm, Camera cam, Vector3 pos, string text, Color c)
+    {
+        if (!tm.gameObject.activeSelf) tm.gameObject.SetActive(true);
+        // Keep the text the same size on screen, whatever the camera distance.
+        float dist = Mathf.Max(1F, (pos - cam.transform.position).magnitude);
+        tm.characterSize = 0.0045F * dist;
+        tm.transform.position = pos + cam.transform.right * 0.15F * dist / 7F;
+        tm.transform.rotation = Quaternion.LookRotation(pos - cam.transform.position, Vector3.up);
+        if (tm.text != text) tm.text = text;
+        tm.color = c;
+    }
+
+    static void HideText(TextMesh tm) { if (tm != null && tm.gameObject.activeSelf) tm.gameObject.SetActive(false); }
 
     // ---------- cue 3: dig area ----------
 
@@ -125,14 +261,19 @@ public class DiggingCues : MonoBehaviour
         else if (edge != null && edge.CurrentLevel == Hazard.Level.Warning) bc = CueKit.Alpha(CueKit.Warn, CueKit.Pulse(6F, 0.5F));
         CueKit.Paint(boundary, bc);
 
-        // Teeth projection on the ground (current, possibly dug, surface).
+        // Teeth projection on the ground: only when the bucket is open more than the threshold.
+        if (m.bucketAngle <= markerMinBucketAngle)
+        {
+            CueKit.Hide(ring); CueKit.Hide(ring2); CueKit.Hide(cross); CueKit.Hide(drop);
+            if (tipState != "hidden") { tipState = "hidden"; StudyLogger.Log("cue_teeth_marker", $"hidden;bucket_angle={m.bucketAngle:F0}"); }
+            return;
+        }
         float groundY = TerrainDigger.CurrentGroundHeight(tip);
         Vector3 g = new Vector3(tip.x, Mathf.Min(groundY, tip.y) + 0.04F, tip.z);
         float depthHere = refY - Mathf.Min(tip.y, groundY);   // how deep the ground (or the teeth) is at this spot
         float target = TargetDepth;
         bool inside = d.Contains(tip, 0.1F);
-        Hazard cable = Find(HazardKind.BuriedCable);
-        bool nearCable = cable != null && cable.CurrentLevel != Hazard.Level.Clear;
+        bool nearCable = Near(HazardKind.BuriedCable) || Near(HazardKind.BuriedPipe);
 
         string state; Color col; bool atGrade = false;
         if (nearCable) { state = "near_cable"; col = CueKit.Alpha(CueKit.Danger, CueKit.Pulse(10F, 0.5F)); }
@@ -166,6 +307,12 @@ public class DiggingCues : MonoBehaviour
         else CueKit.Hide(drop);
     }
 
+    static bool Near(HazardKind kind)
+    {
+        foreach (var h in Hazard.All) if (h.kind == kind && h.active && h.CurrentLevel != Hazard.Level.Clear) return true;
+        return false;
+    }
+
     static Hazard Find(HazardKind kind)
     {
         foreach (var h in Hazard.All) if (h.kind == kind && h.active) return h;
@@ -180,11 +327,27 @@ public class DiggingCues : MonoBehaviour
 
     // ---------- cue 5: bucket trajectory ----------
 
-    float Remaining(Vector3 p)
+    // Lowest safe height for the teeth at p: the target depth, lifted where a buried service is close.
+    float SafeBottom(Vector3 p)
     {
-        float bottom = TerrainDigger.ReferenceGroundHeight(p) - TargetDepth;
-        return Mathf.Max(0F, TerrainDigger.CurrentGroundHeight(p) - bottom);
+        float y = TerrainDigger.ReferenceGroundHeight(p) - TargetDepth;
+        foreach (var h in Hazard.All)
+        {
+            if (!(h is SegmentHazard seg) || !h.active) continue;
+            if (h.kind != HazardKind.BuriedCable && h.kind != HazardKind.BuriedPipe) continue;
+            float R = h.warnDistance + serviceMargin;
+            // closest point of the service line, horizontally
+            Vector3 a = seg.a, b = seg.b, ab = b - a; ab.y = 0F;
+            Vector3 ap = p - a; ap.y = 0F;
+            float t = Mathf.Clamp01(Vector3.Dot(ap, ab) / Mathf.Max(1e-5F, ab.sqrMagnitude));
+            Vector3 q = Vector3.Lerp(seg.a, seg.b, t);
+            float dh = new Vector2(p.x - q.x, p.z - q.z).magnitude;
+            if (dh < R) y = Mathf.Max(y, q.y + Mathf.Sqrt(R * R - dh * dh));
+        }
+        return y;
     }
+
+    float Remaining(Vector3 p) => Mathf.Max(0F, TerrainDigger.CurrentGroundHeight(p) - SafeBottom(p));
 
     bool Scooping()
     {
@@ -263,6 +426,8 @@ public class DiggingCues : MonoBehaviour
         float tNear = Mathf.Max(near, tFar - dragLength);
 
         Vector3 P(float t) => c + r * t + l * bestL;
+        outDir = r;
+        curlKeys.Clear();
         Vector3 e = P(tFar);
         float cut0 = Mathf.Min(cutDepthPerPass, Remaining(e));
 
@@ -271,17 +436,26 @@ public class DiggingCues : MonoBehaviour
         aboveEntry = entry + Vector3.up * 0.9F;
         cutPts.Add(aboveEntry);
         cutPts.Add(entry);
+        curlKeys.Add((1, 20F));                                       // entry: bucket upright, teeth down
+        int dragStart = -1;
         for (float t = tFar - 0.2F; t >= tNear - 1e-3F; t -= 0.2F)
         {
             Vector3 p = P(t);
             float surf = TerrainDigger.CurrentGroundHeight(p);
-            float bottom = TerrainDigger.ReferenceGroundHeight(p) - TargetDepth;
             float ramp = Mathf.Clamp01((tFar - t) / 0.4F);          // penetrate over the first 0.4 m
-            float y = Mathf.Max(surf - cut0 * ramp, bottom);
+            float y = Mathf.Max(surf - cut0 * ramp, SafeBottom(p));  // never below target, never into a service
             cutPts.Add(new Vector3(p.x, Mathf.Min(y, surf), p.z));
+            if (dragStart < 0 && ramp >= 1F) dragStart = cutPts.Count - 1;
         }
+        int dragEnd = cutPts.Count - 1;
+        if (dragStart < 0) dragStart = Mathf.Min(2, dragEnd);
+        int dragMid = (dragStart + dragEnd) / 2;
+        curlKeys.Add((dragStart, 35F));                               // full depth: start curling
+        if (dragMid > dragStart && dragMid < dragEnd) curlKeys.Add((dragMid, 60F));
+        curlKeys.Add((dragEnd, 85F));                                 // end of drag: mostly curled
         Vector3 exitP = P(tNear - 0.35F);
         cutPts.Add(new Vector3(exitP.x, TerrainDigger.CurrentGroundHeight(exitP) + 0.15F, exitP.z));   // curl out
+        curlKeys.Add((cutPts.Count - 1, 105F));                       // exit: fully curled, soil held
         Vector3 liftP = P(tNear - 0.6F);
         cutPts.Add(new Vector3(liftP.x, TerrainDigger.CurrentGroundHeight(liftP) + 1.4F, liftP.z));    // lift
         return true;
@@ -334,12 +508,62 @@ public class DiggingCues : MonoBehaviour
             CueKit.Paint(lr, CueKit.Alpha(CueKit.Bright, 0.9F));
         }
         for (int i = used; i < arrows.Count; i++) CueKit.Hide(arrows[i]);
+
+        DrawAngleLabel(m, tip);
+
+    }
+
+    // Current curl of the real bucket, in the same measure.
+    float CurrentPhi(Excavator m)
+    {
+        Vector3 d = m.BucketPivotPosition - m.BucketTipPosition;
+        float along = Vector3.Dot(d, outDir), up = d.y;
+        return Mathf.Atan2(along, up) * Mathf.Rad2Deg;
+    }
+
+    // Ideal curl at the path point nearest to the teeth (interpolated between the keyframes), or
+    // NaN if the teeth are not close to the path.
+    float IdealPhiNear(Vector3 tip)
+    {
+        if (curlKeys.Count == 0) return float.NaN;
+        int nearest = -1; float best = 0.8F;
+        for (int i = 1; i < cutPts.Count; i++)
+        {
+            float d = (cutPts[i] - tip).magnitude;
+            if (d < best) { best = d; nearest = i; }
+        }
+        if (nearest < 0) return float.NaN;
+        if (nearest <= curlKeys[0].idx) return curlKeys[0].phi;
+        for (int k = 1; k < curlKeys.Count; k++)
+            if (nearest <= curlKeys[k].idx)
+                return Mathf.Lerp(curlKeys[k - 1].phi, curlKeys[k].phi,
+                                  Mathf.InverseLerp(curlKeys[k - 1].idx, curlKeys[k].idx, nearest));
+        return curlKeys[curlKeys.Count - 1].phi;
+    }
+
+    // Current bucket angle next to the bucket (bucket side view only).
+    void DrawAngleLabel(Excavator m, Vector3 tip)
+    {
+        var cam = ContextViews.BucketSideCamera;
+        if (!root.Profile.bucketSideAngleLabel || cam == null) { HideText(angleText); return; }
+        float ideal = IdealPhiNear(tip);
+        string txt = $"BUCKET {m.bucketAngle:0}°";
+        Color c = CueKit.Bright;
+        if (!float.IsNaN(ideal))
+        {
+            float diff = Mathf.DeltaAngle(ideal, CurrentPhi(m));   // > 0: more curled than ideal
+            if (Mathf.Abs(diff) <= curlMatchDegrees) { c = CueKit.Good; txt += "  OK"; }
+            else { c = CueKit.Warn; txt += diff < 0F ? "  CURL MORE" : "  OPEN MORE"; }
+        }
+        Vector3 pos = m.BucketPivotPosition + Vector3.up * 0.6F;
+        PlaceText(angleText, cam, pos, txt, c);
     }
 
     void HideTrajectory()
     {
         CueKit.Hide(cut); CueKit.Hide(approach); CueKit.Hide(entryRing);
         foreach (var a in arrows) CueKit.Hide(a);
+        HideText(angleText);
         if (load != null && load.IsLoaded) hasPlan = false;   // plan a fresh scoop after dumping
     }
 }

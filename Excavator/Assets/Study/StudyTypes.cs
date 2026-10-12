@@ -124,7 +124,8 @@ public static class StudyDesign
             case StudyScenario.Easy_Driving:
                 return "Drive along the marked route to the work site. Avoid obstacles and people.";
             case StudyScenario.Moderate_Digging:
-                return "Dig the marked trench to the target depth. Avoid the buried cable and the trench edge.";
+                return "Drive into the yellow box, then dig the marked trench to the target depth. Dump soil only on the small white square. " +
+                       "Avoid the buried cable, the crossing pipe below the trench, and the worker.";
             default:
                 return "Load the truck as many times as you can before time runs out. Watch for workers and the power line.";
         }

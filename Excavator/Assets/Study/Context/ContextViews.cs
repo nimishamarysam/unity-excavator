@@ -124,6 +124,8 @@ public class ContextViews : MonoBehaviour
         go.GetComponent<Image>().color = new Color(1, 1, 1, 0.9F);
     }
 
+    void OnDisable() { BucketSideCamera = null; }
+
     static void Show(Window w, bool v)
     {
         if (w.visible == v) return;
@@ -142,7 +144,7 @@ public class ContextViews : MonoBehaviour
         {
             case ContextView.Rear: return "REAR VIEW";
             case ContextView.BucketSide: return "BUCKET SIDE VIEW";
-            case ContextView.OverBucket: return "VIEW OVER BUCKET";
+            case ContextView.OverBucket: return "VIEW INTO BUCKET";
             case ContextView.LeftSide: return "LEFT SIDE";
             case ContextView.RightSide: return "RIGHT SIDE";
             default: return "BIRD'S-EYE VIEW";
@@ -163,11 +165,17 @@ public class ContextViews : MonoBehaviour
 
         bool travel = ctl != null && ctl.IsTravelMode;
         var set = travel ? TravelSet : OperationSet;
+        BucketSideCamera = null;
         for (int i = 0; i < 3; i++)
         {
             bool slotOn = show && !(travel && PopupStyleForDriving && i > 0);   // popup style: bird's-eye only
+            if (slotOn && set[i] == ContextView.OverBucket && !IntoBucketWanted()) slotOn = false;
             Show(slots[i], slotOn);
-            if (slotOn) Place(slots[i], set[i], LabelFor(set[i]));
+            if (slotOn)
+            {
+                Place(slots[i], set[i], LabelFor(set[i]));
+                if (set[i] == ContextView.BucketSide) BucketSideCamera = slots[i].cam;
+            }
         }
     }
 
@@ -181,12 +189,75 @@ public class ContextViews : MonoBehaviour
             StudyLogger.Log("view_shown", w.slot + ":" + v);
         }
 
-        w.cam.fieldOfView = (v == ContextView.BucketSide || v == ContextView.OverBucket) ? fieldOfView : wideFieldOfView;
+        // Bucket-side overlays (C3 digging) are drawn only by the camera that shows the bucket side view.
+        int sideOnly = 1 << CueKit.BucketSideOnlyLayer;
+        w.cam.cullingMask = v == ContextView.BucketSide ? (w.cam.cullingMask | sideOnly) : (w.cam.cullingMask & ~sideOnly);
+        w.cam.fieldOfView = v == ContextView.OverBucket ? 50F : v == ContextView.BucketSide ? fieldOfView : wideFieldOfView;
         Pose(v, out Vector3 pos, out Vector3 lookAt);
         if (switched) w.cam.transform.position = pos;   // jump straight to a new view (no camera flight)
         else w.cam.transform.position = Vector3.Lerp(w.cam.transform.position, pos, 1F - Mathf.Exp(-followSpeed * Time.unscaledDeltaTime));
         Vector3 up = v == ContextView.BirdsEye ? ctl.Machine.ForwardFlat : Vector3.up;   // top-down: machine forward is up
         w.cam.transform.rotation = Quaternion.LookRotation(lookAt - w.cam.transform.position, up);
+    }
+
+    // "View into bucket": a close camera that looks into the bucket opening, so the participant sees
+    // how full the bucket is and where the teeth are - not the whole arm.
+    // The opening side is found from the bucket's own geometry: the bucket shell (its renderers) lies on
+    // one side of the line pivot -> teeth, the opening on the other. The camera sits ~2 m out on the
+    // opening side (blended with "up" so it never goes below the ground), shifted a little sideways so
+    // the arm is not in the middle of the picture.
+    // The view into the bucket is only shown when the bucket is open (not curled): the bucket angle
+    // (as on the measurement bar) must be above intoBucketMinAngle. 2 degree hysteresis + 0.4 s hold against flicker.
+    public float intoBucketMinAngle = 5F;
+    bool intoBucketOn;
+    float intoBucketChanged = -10F;
+
+    bool IntoBucketWanted()
+    {
+        var m = ctl.Machine;
+        float a = m.bucketAngle;
+        bool want = intoBucketOn ? a > intoBucketMinAngle - 2F : a > intoBucketMinAngle;
+        if (want != intoBucketOn && Time.unscaledTime - intoBucketChanged > 0.4F)
+        {
+            intoBucketOn = want;
+            intoBucketChanged = Time.unscaledTime;
+            if (!want) StudyLogger.Log("view_hidden", $"OverBucket;bucket_angle={a:F0}");
+        }
+        return intoBucketOn;
+    }
+
+    // The camera currently showing the BUCKET SIDE VIEW (null if none). Used by the C3 overlays.
+    public static Camera BucketSideCamera { get; private set; }
+
+    Renderer[] bucketRenderers;
+    public float intoBucketDistance = 2.0F;
+    public float intoBucketSideShift = 0.7F;
+
+    void IntoBucket(out Vector3 pos, out Vector3 lookAt)
+    {
+        var m = ctl.Machine;
+        Vector3 piv = m.BucketPivotPosition, tip = m.BucketTipPosition;
+        Vector3 mid = (piv + tip) / 2F;
+        Vector3 axis = (tip - piv).normalized;
+
+        if (bucketRenderers == null) bucketRenderers = m.BucketTransform.GetComponentsInChildren<Renderer>();
+        Vector3 shell = Vector3.zero; int n = 0;
+        foreach (var r in bucketRenderers) if (r != null && r.enabled) { shell += r.bounds.center; n++; }
+        Vector3 open = Vector3.up;
+        if (n > 0)
+        {
+            Vector3 s = shell / n - mid;
+            s -= Vector3.Dot(s, axis) * axis;          // part across the pivot-teeth line
+            if (s.sqrMagnitude > 1e-4F) open = -s.normalized;
+        }
+
+        Vector3 viewDir = (open + Vector3.up * 0.8F).normalized;   // from the bucket towards the camera
+        if (viewDir.y < 0.35F) { viewDir.y = 0.35F; viewDir.Normalize(); }
+        Vector3 side = m.BucketTransform.right;                    // bucket hinge axis (across the bucket)
+        lookAt = mid - open * 0.15F;                               // a little inside the bucket
+        pos = mid + viewDir * intoBucketDistance + side * intoBucketSideShift;
+        float ground = TerrainDigger.CurrentGroundHeight(pos) + 0.4F;
+        if (pos.y < ground) pos.y = ground;
     }
 
     void Pose(ContextView v, out Vector3 pos, out Vector3 lookAt)
@@ -210,8 +281,7 @@ public class ContextViews : MonoBehaviour
                 lookAt = new Vector3(tip.x, Mathf.Min(tip.y, ground.y), tip.z);
                 break;
             case ContextView.OverBucket:
-                pos = tip + Vector3.up * (9F * z) - reachDir * 1.5F;
-                lookAt = tip + Vector3.down * 2F;
+                IntoBucket(out pos, out lookAt);
                 break;
             case ContextView.LeftSide:
             case ContextView.RightSide:

@@ -75,7 +75,7 @@ public class AttentionCues : MonoBehaviour
 
         // The cab camera (and the machine's mirror/rear cameras) must not draw the context-only highlights.
         foreach (var cam in controller.Machine.transform.GetComponentsInChildren<Camera>(true))
-            cam.cullingMask &= ~(1 << CueKit.ContextOnlyLayer);
+            cam.cullingMask &= ~((1 << CueKit.ContextOnlyLayer) | (1 << CueKit.BucketSideOnlyLayer));
 
         Obstacles = gameObject.AddComponent<ObstacleCues>();
         Obstacles.Init(this);
@@ -136,6 +136,11 @@ public class CueProfile
     public bool steeringBanner = true;           // false = banner only for STOP / SLOW (workers)
     public bool pathEndRing = true;
 
+    // Digging cue detail
+    public bool trajectoryInBucketSideViewOnly = false;   // true = bucket path drawn only in the BUCKET SIDE VIEW
+    public bool bucketSideHeightArrow = false;            // vertical arrow + height/depth in the BUCKET SIDE VIEW
+    public bool bucketSideAngleLabel = false;             // current bucket angle next to the bucket in that view
+
     public static CueProfile For(StudyScenario s)
     {
         switch (s)
@@ -150,6 +155,17 @@ public class CueProfile
                     name = "driving",
                     digArea = false, trajectory = false,
                     obstaclesOnlyNearPath = true, gatePostsOnlyAtWarning = true,
+                    groundRing = false, pathEndRing = false,
+                };
+            case StudyScenario.Moderate_Digging:
+                // Digging: dig area outline + teeth marker in all views; the bucket path, height arrow and
+                // bucket angle only in the BUCKET SIDE VIEW. No driving-path end ring, no ground rings.
+                return new CueProfile
+                {
+                    name = "digging",
+                    trajectoryInBucketSideViewOnly = true,
+                    bucketSideHeightArrow = true,
+                    bucketSideAngleLabel = true,
                     groundRing = false, pathEndRing = false,
                 };
             default:

@@ -113,6 +113,7 @@ public class PopupViews : MonoBehaviour
         p.cam.depth = 60;
         p.cam.fieldOfView = 50F;
         p.cam.nearClipPlane = 0.2F;
+        p.cam.cullingMask &= ~(1 << CueKit.BucketSideOnlyLayer);
 
         Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         p.frame = new GameObject("PopupFrame_" + h.hazardId);

@@ -93,7 +93,8 @@ public class ObstacleCues : MonoBehaviour
             case HazardKind.Worker: return workerRange;
             case HazardKind.Obstacle: return h.warnDistance + obstacleExtra;
             case HazardKind.PowerLine: return h.warnDistance + powerLineExtra;
-            case HazardKind.BuriedCable: return h.warnDistance + cableExtra;
+            case HazardKind.BuriedCable:
+            case HazardKind.BuriedPipe: return h.warnDistance + cableExtra;
             default: return -1F;   // truck: only at warning level (dumping right over it is normal)
         }
     }
@@ -169,6 +170,7 @@ public class ObstacleCues : MonoBehaviour
             case HazardKind.Truck: return "TRUCK";
             case HazardKind.PowerLine: return "POWER LINE";
             case HazardKind.BuriedCable: return "BURIED CABLE";
+            case HazardKind.BuriedPipe: return "CROSSING PIPE";
             default: return h.hazardId.Contains("post") ? "GATE POST" : "OBSTACLE";
         }
     }
@@ -178,7 +180,7 @@ public class ObstacleCues : MonoBehaviour
         var h = t.h;
         if (h is SegmentHazard)
         {
-            if (h.kind == HazardKind.BuriedCable)
+            if (h.kind == HazardKind.BuriedCable || h.kind == HazardKind.BuriedPipe)
                 return new Bounds(CueKit.OnSurface(h.HazardPoint, 0.2F), new Vector3(1.6F, 0.4F, 1.6F));
             return new Bounds(h.HazardPoint, new Vector3(1.6F, 0.8F, 1.6F));
         }
@@ -229,7 +231,7 @@ public class ObstacleCues : MonoBehaviour
         if (h is SegmentHazard seg)
         {
             Vector3 a = seg.a, bb = seg.b;
-            if (h.kind == HazardKind.BuriedCable) { a = CueKit.OnSurface(a, 0.08F); bb = CueKit.OnSurface(bb, 0.08F); }
+            if (h.kind == HazardKind.BuriedCable || h.kind == HazardKind.BuriedPipe) { a = CueKit.OnSurface(a, 0.08F); bb = CueKit.OnSurface(bb, 0.08F); }
             t.segment.positionCount = 2;
             t.segment.SetPosition(0, a);
             t.segment.SetPosition(1, bb);

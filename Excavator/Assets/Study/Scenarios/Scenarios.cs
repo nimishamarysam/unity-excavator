@@ -162,28 +162,65 @@ public class DrivingScenario : Scenario
     }
 }
 
-// MODERATE - DIGGING: dig a trench to 1.2 m, dump spoil on the white square.
-// Hazards: over-digging, a buried cable next to the trench, driving too close to the trench edge.
+// MODERATE - DIGGING: drive to the work position, dig a trench to 1.2 m, dump spoil on the white square.
+// Task demands:
+//   - Some driving: the machine starts 9 m behind the work position (yellow box) and must drive there first.
+//   - Strict spoil placement: small spoil square (2.5 m) at least 5 m from the trench edge, about 120 degrees
+//     swing from the trench, on the side away from the cable. Dumps outside it are spills; dumps within 5 m
+//     of the trench edge are logged as "too_close_to_trench" spills.
+//   - Buried cable parallel to the trench (0.5-0.8 m outside the edge, 0.9 m deep), marked with orange posts.
+//   - Crossing service: a pipe crossing the trench 0.25 m BELOW the target depth (yellow posts on both sides).
+//     Safe when digging to the target, struck when digging too deep at that spot.
+//   - One worker event: at a random time a worker walks to the trench edge on the spoil side (inside the swing
+//     path), stands there for a few seconds and walks away. Logged: bucket_over_worker, swing_toward_worker.
+// Hazards also logged by the HazardTracker: over-digging, cable, pipe, trench edge (tracks), worker.
 public class DiggingScenario : Scenario
 {
     const float TargetDepth = 1.2F;
-    BucketLoad load;
-    Vector3 trench, spoil, f;
-    float trenchLen, maxDepth;
-    int spoilDumps, spills, overDigs;
-    bool overDigArmed = true;
+    const float SpoilSize = 2.5F;             // was 3.5 m
+    const float SpoilMinGap = 5F;             // minimum distance between spoil square and trench edge
+    const float SpoilSwingDeg = 120F;         // swing angle from the trench direction to the spoil square
+    const float PipeBelowTarget = 0.25F;      // crossing pipe depth below the target depth
+    const float WorkerStandSeconds = 6F;
 
-    public override string TaskText => $"Dig the trench between the stakes to {TargetDepth:0.0} m deep";
+    static readonly Vector3 workPos = new Vector3(-16.5F, 0, -7.5F);
+    const float StartBehind = 9F;             // metres behind the work position at the start
+
+    BucketLoad load;
+    Vector3 trench, spoil, f, r;
+    float trenchLen, maxDepth, side;
+    int spoilDumps, spills, tooClose, overDigs, bucketOverWorker, swingTowardWorker, pipeStrikes, cableStrikes;
+    bool overDigArmed = true, arrived;
+    SegmentHazard cable, pipe;
+    WorkerWalker worker;
+    float workerAt, workerUntil = -1F;
+    bool overLogged, swingLogged;
+    float prevAngleToWorker = -1F;
+    Hazard.Level pipeLevel, cableLevel;
+
+    public override string TaskText => arrived ? $"Dig the trench between the stakes to {TargetDepth:0.0} m deep"
+                                               : "Drive into the yellow box (press B for travel mode)";
     public override Vector3? DumpTarget => spoil;
     public override float? DigTargetDepth => TargetDepth;
-    public override string ProgressText =>
-        $"Trench done: {TerrainDigger.Instance.FractionDugTo(TargetDepth) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
-        "Dump soil on the white square. Do not dig near the orange cable markers.";
+    public override string ProgressText => arrived
+        ? $"Trench done: {TerrainDigger.Instance.FractionDugTo(TargetDepth) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
+          "Dump soil ONLY on the small white square. Avoid the orange cable and the yellow pipe markers."
+        : "Then press B again for digging mode.";
+
+    public override System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse)
+    {
+        reverse = false;
+        if (arrived) return null;
+        return new System.Collections.Generic.List<Vector3> { WorldBuilder.OnGround(workPos) };
+    }
 
     protected override void Build()
     {
         f = Vector3.right;
-        PlaceMachine(-16.5F, -7.5F, f);
+        r = Vector3.Cross(Vector3.up, f);
+
+        // Lay out everything relative to the WORK position, then move the machine back to the start.
+        PlaceMachine(workPos.x, workPos.z, f);
         M.EnableCuttingEdges(true);
         float reach = M.MaxReach;
 
@@ -192,12 +229,14 @@ public class DiggingScenario : Scenario
         TerrainDigger.Instance.SetZone(trench, f, trenchLen, 2F, TargetDepth + 0.6F);
         Outline("trench", trench, f, trenchLen, 2F, BucketLoad.SoilMaterial().color);
 
+        // Work position box (where the machine should stand while digging).
+        Outline("work", WorldBuilder.OnGround(workPos), f, 5.5F, 4.5F, WorldBuilder.Yellow);
+
         // Buried cable: parallel to the trench, 0.5-0.8 m outside its edge, 0.9 m deep. Side is random.
-        float side = Rng.NextDouble() < 0.5 ? 1F : -1F;
+        side = Rng.NextDouble() < 0.5 ? 1F : -1F;
         float offset = side * (1F + Rand(0.5F, 0.8F));
-        Vector3 r = Vector3.Cross(Vector3.up, f);
         Vector3 a = trench - f * (trenchLen / 2F + 2F) + r * offset, b = trench + f * (trenchLen / 2F + 2F) + r * offset;
-        var cable = new GameObject("BuriedCable").AddComponent<SegmentHazard>();
+        cable = new GameObject("BuriedCable").AddComponent<SegmentHazard>();
         cable.transform.SetParent(Root);
         cable.a = WorldBuilder.OnGround(a) + Vector3.down * 0.9F;
         cable.b = WorldBuilder.OnGround(b) + Vector3.down * 0.9F;
@@ -207,6 +246,24 @@ public class DiggingScenario : Scenario
             WorldBuilder.Shape(PrimitiveType.Cylinder, Root, "CableMarker", Vector3.Lerp(a, b, s), new Vector3(0.1F, 0.5F, 0.1F), WorldBuilder.Orange, 0, false);
         WorldBuilder.GroundMark(Root, "CableLine", WorldBuilder.OnGround((a + b) / 2F), (b - a).magnitude, 0.1F, 90F, WorldBuilder.Orange);
 
+        // Crossing service: a pipe across the trench, 0.25 m below the target depth, in the middle part of the trench.
+        Vector3 cross = trench + f * Rand(-0.2F, 0.2F) * trenchLen;
+        Vector3 pa = cross - r * 2.5F, pb = cross + r * 2.5F;
+        pipe = new GameObject("CrossingPipe").AddComponent<SegmentHazard>();
+        pipe.transform.SetParent(Root);
+        float pipeDepth = TargetDepth + PipeBelowTarget;
+        pipe.a = new Vector3(pa.x, TerrainDigger.ReferenceGroundHeight(pa) - pipeDepth, pa.z);
+        pipe.b = new Vector3(pb.x, TerrainDigger.ReferenceGroundHeight(pb) - pipeDepth, pb.z);
+        pipe.hazardId = "crossing_pipe"; pipe.kind = HazardKind.BuriedPipe;
+        pipe.measure = HazardMeasure.BucketTeethOnly; pipe.warnDistance = 0.2F; pipe.contactDistance = 0.08F;
+        // Markers only OUTSIDE the trench (a mark across the hole would float in the air once dug).
+        foreach (float sgn in new[] { -1F, 1F })
+        {
+            Vector3 post = cross + r * sgn * 1.9F;
+            WorldBuilder.Shape(PrimitiveType.Cylinder, Root, "PipeMarker", post, new Vector3(0.12F, 0.55F, 0.12F), WorldBuilder.Yellow, 0, false);
+            WorldBuilder.GroundMark(Root, "PipeLine", WorldBuilder.OnGround(cross + r * sgn * 1.75F), 1.5F, 0.12F, 0F, WorldBuilder.Yellow);
+        }
+
         // Trench edge: warns when the TRACKS get close to the trench.
         var edge = new GameObject("TrenchEdge").AddComponent<RectEdgeHazard>();
         edge.transform.SetParent(Root);
@@ -214,21 +271,68 @@ public class DiggingScenario : Scenario
         edge.hazardId = "trench_edge"; edge.kind = HazardKind.TrenchEdge; edge.measure = HazardMeasure.TracksOnly;
         edge.warnDistance = 1.5F; edge.contactDistance = 0.3F;
 
-        // Spoil square on the side away from the cable.
-        spoil = Rel(0.1F * reach, -side * 0.6F * reach);
-        Outline("spoil", spoil, f, 3.5F, 3.5F, WorldBuilder.White);
+        // Spoil square: ~120 degree swing towards the side away from the cable, at the shortest distance
+        // that keeps it at least 5 m from the trench edge.
+        float ang = SpoilSwingDeg * Mathf.Deg2Rad;
+        Vector3 dir = f * Mathf.Cos(ang) + r * (-side) * Mathf.Sin(ang);
+        Vector3 c0 = WorldBuilder.OnGround(workPos);
+        spoil = c0 + dir * (0.85F * reach);
+        bool ok = false;
+        for (float d = 0.5F * reach; d <= 0.85F * reach + 1e-3F; d += 0.1F)
+        {
+            Vector3 p = WorldBuilder.OnGround(c0 + dir * d);
+            if (GapToTrench(p, SpoilSize / 2F) >= SpoilMinGap) { spoil = p; ok = true; break; }
+        }
+        if (!ok) Debug.LogWarning($"[Study] Spoil square only {GapToTrench(spoil, SpoilSize / 2F):F1} m from the trench (reach {reach:F1} m)");
+        Outline("spoil", spoil, f, SpoilSize, SpoilSize, WorldBuilder.White);
+        StudyLogger.Log("layout", $"reach={reach:F2};spoil_gap={GapToTrench(spoil, SpoilSize / 2F):F2};spoil_dist={(spoil - c0).magnitude:F2};pipe_depth={pipeDepth:F2};cable_side={side}");
+
+        // Worker: hidden until the event.
+        Vector3 stand = trench + r * (-side) * 2F + f * Rand(-0.25F, 0.25F) * trenchLen;
+        worker = WorldBuilder.Worker(Root, "WorkerAtTrench", stand + r * (-side) * 12F + f * 4F);
+        worker.Hide();
+        workerAt = Rand(45F, 110F);
+        workerStand = stand;
 
         load = gameObject.AddComponent<BucketLoad>();
         load.Init(M);
         load.Dumped += p =>
         {
-            if (InRect(p, spoil, f, 3.5F, 3.5F, 0.8F)) { spoilDumps++; StudyLogger.Log("dump", $"spoil_area;amount={load.LastDumpAmount:F2}"); }
+            if (InRect(p, spoil, f, SpoilSize, SpoilSize, 0.3F)) { spoilDumps++; StudyLogger.Log("dump", $"spoil_area;amount={load.LastDumpAmount:F2}"); }
+            else if (GapToTrench(p, 0F) < SpoilMinGap) { spills++; tooClose++; StudyLogger.Log("spill", $"too_close_to_trench;gap={GapToTrench(p, 0F):F2};amount={load.LastDumpAmount:F2}"); }
             else { spills++; StudyLogger.Log("spill", $"outside_spoil_area;amount={load.LastDumpAmount:F2}"); }
         };
+
+        // Start position: 9 m behind the work position, same heading.
+        Vector3 start = workPos - f * StartBehind;
+        PlaceMachine(start.x, start.z, f);
+    }
+
+    Vector3 workerStand;
+
+    // Distance from a square (centre p, half size h, aligned with the trench) to the trench rectangle.
+    float GapToTrench(Vector3 p, float h)
+    {
+        Vector3 d = p - trench;
+        float du = Mathf.Abs(Vector3.Dot(d, f)) - (trenchLen / 2F + h);
+        float dv = Mathf.Abs(Vector3.Dot(d, r)) - (1F + h);
+        return new Vector2(Mathf.Max(0F, du), Mathf.Max(0F, dv)).magnitude;
     }
 
     protected override void Tick()
     {
+        float t = SM.TrialTime;
+
+        if (!arrived)
+        {
+            Vector3 c = M.SwingCenter;
+            if (new Vector2(c.x - workPos.x, c.z - workPos.z).magnitude < 1.2F)
+            {
+                arrived = true;
+                StudyLogger.Log("stage", "at_work_position");
+            }
+        }
+
         Vector3 tip = M.BucketTipPosition;
         float depth = TerrainDigger.ReferenceGroundHeight(tip) - tip.y;
         if (TerrainDigger.Instance.Contains(tip))
@@ -238,11 +342,56 @@ public class DiggingScenario : Scenario
         }
         if (depth < 0F) overDigArmed = true;
 
+        // Strikes (contact level reached) of the buried services.
+        if (pipe.CurrentLevel == Hazard.Level.Contact && pipeLevel != Hazard.Level.Contact) pipeStrikes++;
+        if (cable.CurrentLevel == Hazard.Level.Contact && cableLevel != Hazard.Level.Contact) cableStrikes++;
+        pipeLevel = pipe.CurrentLevel; cableLevel = cable.CurrentLevel;
+
+        WorkerEvent(t, tip);
+
         if (TerrainDigger.Instance.FractionDugTo(TargetDepth) >= 0.75F) Complete("completed");
     }
 
+    // One worker walks to the trench edge (inside the swing path to the spoil square), waits, and walks away.
+    void WorkerEvent(float t, Vector3 tip)
+    {
+        if (workerAt > 0F && t >= workerAt)
+        {
+            workerAt = -1F;
+            Vector3 from = workerStand + r * (-side) * 12F + f * 4F;
+            worker.Appear(from);
+            worker.WalkTo(workerStand, WorkerStandSeconds);
+            worker.WalkTo(from);
+            workerUntil = t + 30F;
+            StudyLogger.Log("event_start", "worker_at_trench");
+        }
+        if (workerUntil < 0F || t > workerUntil || !worker.gameObject.activeInHierarchy) return;
+
+        Vector3 wp = worker.transform.position;
+        Vector3 c = M.SwingCenter;
+
+        // Bucket over the worker: teeth within 1.5 m horizontally and above them.
+        bool over = new Vector2(tip.x - wp.x, tip.z - wp.z).magnitude < 1.5F && tip.y > wp.y - 0.5F;
+        if (over && !overLogged) { bucketOverWorker++; overLogged = true; StudyLogger.Log("bucket_over_worker", $"dist_h={new Vector2(tip.x - wp.x, tip.z - wp.z).magnitude:F2}"); }
+        if (!over && new Vector2(tip.x - wp.x, tip.z - wp.z).magnitude > 3F) overLogged = false;
+
+        // Swinging towards the worker: swing input active, the boom turning towards them, worker within reach.
+        Vector3 toW = wp - c; toW.y = 0F;
+        Vector3 toTip = tip - c; toTip.y = 0F;
+        float angle = Vector3.Angle(toTip, toW);
+        bool inReach = toW.magnitude < M.MaxReach + 1F;
+        if (prevAngleToWorker >= 0F && inReach && Ctl.LastInput.swing != 0F && angle < 60F && angle < prevAngleToWorker - 0.2F)
+        {
+            if (!swingLogged) { swingTowardWorker++; swingLogged = true; StudyLogger.Log("swing_toward_worker", $"angle={angle:F0};dist={toW.magnitude:F1}"); }
+        }
+        if (angle > 75F || Ctl.LastInput.swing == 0F) swingLogged = false;
+        prevAngleToWorker = angle;
+    }
+
     public override string Summary() =>
-        $"dug={TerrainDigger.Instance.FractionDugTo(TargetDepth):F2};scoops={load.Scoops};spoil_dumps={spoilDumps};spills={spills};over_digs={overDigs};max_depth={maxDepth:F2}";
+        $"dug={TerrainDigger.Instance.FractionDugTo(TargetDepth):F2};scoops={load.Scoops};spoil_dumps={spoilDumps};spills={spills};" +
+        $"too_close={tooClose};over_digs={overDigs};max_depth={maxDepth:F2};pipe_strikes={pipeStrikes};cable_strikes={cableStrikes};" +
+        $"bucket_over_worker={bucketOverWorker};swing_toward_worker={swingTowardWorker};arrived={(arrived ? 1 : 0)}";
 }
 
 // HARD - DIG AND DUMP: load the truck 6 times before time runs out.

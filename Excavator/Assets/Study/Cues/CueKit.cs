@@ -18,6 +18,9 @@ public static class CueKit
     // Objects on this layer are drawn ONLY by the context-aware cameras (side panel and pop-ups),
     // not by the cab camera. Used for the 3D highlights around obstacles. Layer 31 is unused in this project.
     public const int ContextOnlyLayer = 31;
+    // Objects on this layer are drawn ONLY by the BUCKET SIDE VIEW camera (C3 digging overlays:
+    // bucket trajectory, height arrow, bucket angle). Layer 30 is unused in this project.
+    public const int BucketSideOnlyLayer = 30;
 
     public static readonly Color Look   = new Color(1F, 0.85F, 0.1F);
     public static readonly Color Warn   = new Color(1F, 0.5F, 0.05F);

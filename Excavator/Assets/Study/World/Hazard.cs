@@ -14,7 +14,7 @@ using UnityEngine;
 // Later, the context monitor and the attention cues read the same list.
 // ---------------------------------------------------------------------------
 
-public enum HazardKind { Worker, Obstacle, BuriedCable, PowerLine, TrenchEdge, Truck }
+public enum HazardKind { Worker, Obstacle, BuriedCable, PowerLine, TrenchEdge, Truck, BuriedPipe }
 
 // Which part of the machine counts when measuring distance.
 public enum HazardMeasure { WholeMachine, BucketTeethOnly, TracksOnly }
