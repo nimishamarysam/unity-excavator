@@ -56,15 +56,31 @@ public class ObstacleCues : MonoBehaviour
         int[] edgeCount = new int[5];
         seen.Clear();
 
+        // 1. Which hazards want a cue.
+        wanted.Clear();
         foreach (var h in Hazard.All)
         {
             if (h == null || h is RectEdgeHazard) continue;   // trench edge: shown by the dig-area outline
             var t = Get(h);
             seen.Add(h);
             UpdateVelocity(t);
-
             bool typeOn = IsDynamic(h) ? root.DynamicOn : root.StaticOn;
-            bool want = visible && typeOn && h.active && h.gameObject.activeInHierarchy && InRange(h, t.shown) && Relevant(h);
+            if (visible && typeOn && h.active && h.gameObject.activeInHierarchy && InRange(h, t.shown) && Relevant(h)) wanted.Add(h);
+        }
+        // 2. Profile limit: keep only the most urgent ones (contact > warning > in range; workers first; closest first).
+        int max = root.Profile.maxObstacleCues;
+        if (max > 0 && wanted.Count > max)
+        {
+            wanted.Sort((a, b) => Urgency(a).CompareTo(Urgency(b)));
+            wanted.RemoveRange(max, wanted.Count - max);
+        }
+
+        // 3. Show / hide.
+        foreach (var h in Hazard.All)
+        {
+            if (h == null || h is RectEdgeHazard) continue;
+            var t = tracks[h];
+            bool want = wanted.Contains(h);
             if (want != t.shown)
             {
                 t.shown = want;
@@ -82,6 +98,14 @@ public class ObstacleCues : MonoBehaviour
             if (kv.Key != null) AttentionCues.LogCue(false, IsDynamic(kv.Key) ? "dynamic_obstacle" : "static_obstacle", kv.Key.hazardId + ";gone");
             HideTrack(kv.Value);
         }
+    }
+
+    readonly List<Hazard> wanted = new List<Hazard>();
+
+    static float Urgency(Hazard h)
+    {
+        float level = h.CurrentLevel == Hazard.Level.Contact ? 0F : h.CurrentLevel == Hazard.Level.Warning ? 100F : 200F;
+        return level + (IsDynamic(h) ? -50F : 0F) + Mathf.Min(h.CurrentDistance, 49F);
     }
 
     // ---------- when is a cue shown ----------
@@ -109,8 +133,12 @@ public class ObstacleCues : MonoBehaviour
     // Profile filters (e.g. driving: only obstacles near the planned path, gate posts only when close).
     bool Relevant(Hazard h)
     {
-        if (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear) return true;
         var p = root.Profile;
+        if (p.truckOnlyAtContact && h.kind == HazardKind.Truck) return h.CurrentLevel == Hazard.Level.Contact;
+        if (p.obstaclesHiddenInDigMode && !root.Ctl.IsTravelMode && h.kind == HazardKind.Obstacle)
+            return h.CurrentLevel == Hazard.Level.Contact;
+        if (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear) return true;
+        if (p.staticOnlyAtWarning) return false;
         if (p.gatePostsOnlyAtWarning && h.hazardId.Contains("post")) return false;
         if (p.obstaclesOnlyNearPath && h.kind == HazardKind.Obstacle)
         {
@@ -130,7 +158,7 @@ public class ObstacleCues : MonoBehaviour
         string id = h.hazardId;
         t.box = new ScreenBox(root.CanvasRoot, root.Font, "CueBox_" + id);
         int L = CueKit.ContextOnlyLayer;
-        t.wire = CueKit.Line(root.WorldRoot, "CueWire_" + id, 0.07F, true, false, L);
+        t.wire = CueKit.Line(root.WorldRoot, "CueWire_" + id, root.Profile.thinHighlight ? 0.035F : 0.07F, true, false, L);
         t.ring = CueKit.Line(root.WorldRoot, "CueRing_" + id, 0.12F, true, true, L);
         t.motion = CueKit.Line(root.WorldRoot, "CueMotion_" + id, 0.15F, true, true, L);
         t.segment = CueKit.Line(root.WorldRoot, "CueSegment_" + id, 0.2F, true, false, L);
@@ -216,13 +244,18 @@ public class ObstacleCues : MonoBehaviour
         // --- driver view: rectangle or edge marker ---
         string label = $"{Name(h)}  {h.CurrentDistance:0.0} m";
         if (root.PassAdvice.TryGetValue(h, out var advice)) label += "\n" + advice;
-        if (IsDynamic(h) && root.Profile.workerMotionText) label += "\n" + MotionText(t, cam);
+        if (IsDynamic(h) && root.Profile.workerMotionText)
+        {
+            string mt = MotionText(t, cam);
+            if (!root.Profile.workerMotionOnlyApproaching || mt == "COMING TOWARDS YOU") label += "\n" + mt;
+        }
 
         Vector3 centerVp = Vector3.zero;
         if (cam != null && CueKit.ProjectBox(cam, b, out Rect r, out centerVp))
             t.box.ShowBox(r, col, label);
-        else if (cam != null && (root.Profile.edgeMarkersForAll ? (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear)
-                                                                : (IsDynamic(h) && h.CurrentLevel != Hazard.Level.Clear)))
+        else if (cam != null && (root.Profile.edgeMarkersWorkersOnly ? IsDynamic(h)
+                                 : root.Profile.edgeMarkersForAll ? (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear)
+                                                                  : (IsDynamic(h) && h.CurrentLevel != Hazard.Level.Clear)))
             EdgeMarker(t, cam, centerVp, col, $"{Name(h)}  {h.CurrentDistance:0.0} m", edgeCount);
         else
             t.box.Hide();

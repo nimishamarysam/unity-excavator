@@ -11,6 +11,9 @@ using UnityEngine.UI;
 //   Operation mode (digging, carrying,
 //   dumping):                            BIRD'S-EYE | OVER BUCKET | BUCKET SIDE
 //
+// Other scenarios in travel mode (with PopupStyleForDriving): the same two-part panel - bird's-eye view
+// in the top half, obstacle camera below it. In operation mode the three windows above are used.
+//
 // DRIVING scenario (UseDrivingLayout): only ONE fixed window, the bird's-eye view in the top half
 // of the panel. The bottom half is the obstacle camera, shown by PopupViews only when something is close.
 //
@@ -30,13 +33,14 @@ public class ContextViews : MonoBehaviour
 
     public float followSpeed = 6F;
     public float fieldOfView = 42F;     // close-up views (bucket side, over bucket)
-    public float zoom = 0.7F;           // multiplies close-up camera distances: smaller = closer
+    public float zoom = 1.0F;           // multiplies close-up camera distances: smaller = closer (was 0.7)
     // Bird's-eye, rear and side cameras keep the original wider setting.
     public float birdsEyeHeight = 20F;
     public float wideFieldOfView = 55F;
 
     ExcavatorController ctl;
     Window[] slots;
+    Window travelBirdsEye;   // other scenarios, travel mode: bird's-eye in the TOP HALF (obstacle camera below it)
     bool drivingLayout;
 
     // True in the driving scenario: bird's-eye (top) + obstacle camera on proximity (bottom).
@@ -72,6 +76,11 @@ public class ContextViews : MonoBehaviour
             Rect r = drivingLayout ? StudyLayout.PanelSlot(0, 2) : StudyLayout.PanelSlot(i);
             slots[i] = MakeWindow("Slot" + (i + 1), r, 50 + i);
             Show(slots[i], false);
+        }
+        if (!drivingLayout)
+        {
+            travelBirdsEye = MakeWindow("TravelTop", StudyLayout.PanelSlot(0, 2), 53);
+            Show(travelBirdsEye, false);
         }
     }
 
@@ -164,8 +173,20 @@ public class ContextViews : MonoBehaviour
         }
 
         bool travel = ctl != null && ctl.IsTravelMode;
-        var set = travel ? TravelSet : OperationSet;
         BucketSideCamera = null;
+
+        // Travel mode with obstacle cameras: same panel as the driving scenario - bird's-eye view in the
+        // top half, the obstacle camera (PopupViews) in the bottom half when something is close.
+        if (travel && PopupStyleForDriving)
+        {
+            for (int i = 0; i < 3; i++) Show(slots[i], false);
+            Show(travelBirdsEye, show);
+            if (show) Place(travelBirdsEye, ContextView.BirdsEye, LabelFor(ContextView.BirdsEye));
+            return;
+        }
+        Show(travelBirdsEye, false);
+
+        var set = travel ? TravelSet : OperationSet;
         for (int i = 0; i < 3; i++)
         {
             bool slotOn = show && !(travel && PopupStyleForDriving && i > 0);   // popup style: bird's-eye only
@@ -192,7 +213,7 @@ public class ContextViews : MonoBehaviour
         // Bucket-side overlays (C3 digging) are drawn only by the camera that shows the bucket side view.
         int sideOnly = 1 << CueKit.BucketSideOnlyLayer;
         w.cam.cullingMask = v == ContextView.BucketSide ? (w.cam.cullingMask | sideOnly) : (w.cam.cullingMask & ~sideOnly);
-        w.cam.fieldOfView = v == ContextView.OverBucket ? 50F : v == ContextView.BucketSide ? fieldOfView : wideFieldOfView;
+        w.cam.fieldOfView = v == ContextView.OverBucket ? 55F : v == ContextView.BucketSide ? fieldOfView : wideFieldOfView;
         Pose(v, out Vector3 pos, out Vector3 lookAt);
         if (switched) w.cam.transform.position = pos;   // jump straight to a new view (no camera flight)
         else w.cam.transform.position = Vector3.Lerp(w.cam.transform.position, pos, 1F - Mathf.Exp(-followSpeed * Time.unscaledDeltaTime));
@@ -200,12 +221,6 @@ public class ContextViews : MonoBehaviour
         w.cam.transform.rotation = Quaternion.LookRotation(lookAt - w.cam.transform.position, up);
     }
 
-    // "View into bucket": a close camera that looks into the bucket opening, so the participant sees
-    // how full the bucket is and where the teeth are - not the whole arm.
-    // The opening side is found from the bucket's own geometry: the bucket shell (its renderers) lies on
-    // one side of the line pivot -> teeth, the opening on the other. The camera sits ~2 m out on the
-    // opening side (blended with "up" so it never goes below the ground), shifted a little sideways so
-    // the arm is not in the middle of the picture.
     // The view into the bucket is only shown when the bucket is open (not curled): the bucket angle
     // (as on the measurement bar) must be above intoBucketMinAngle. 2 degree hysteresis + 0.4 s hold against flicker.
     public float intoBucketMinAngle = 5F;
@@ -229,33 +244,25 @@ public class ContextViews : MonoBehaviour
     // The camera currently showing the BUCKET SIDE VIEW (null if none). Used by the C3 overlays.
     public static Camera BucketSideCamera { get; private set; }
 
-    Renderer[] bucketRenderers;
-    public float intoBucketDistance = 2.0F;
-    public float intoBucketSideShift = 0.7F;
+    // "View into bucket": a close camera that looks down into the bucket from a FIXED vantage point
+    // relative to the arm's working plane: above the bucket, a little towards the cab and to the right
+    // of the arm, so the arm does not cover the picture. It does not depend on how the bucket is rotated,
+    // so the perspective stays the same while the bucket curls or opens (it only follows the bucket's
+    // position, smoothly).
+    public float intoBucketDistance = 3.2F;
+    public float bucketSideDistance = 5F;     // bucket side view: distance from the bucket   // camera height-ish distance from the bucket (was 2.0)
+    public float intoBucketSideShift = 1.3F;  // to the right of the arm
 
     void IntoBucket(out Vector3 pos, out Vector3 lookAt)
     {
         var m = ctl.Machine;
         Vector3 piv = m.BucketPivotPosition, tip = m.BucketTipPosition;
         Vector3 mid = (piv + tip) / 2F;
-        Vector3 axis = (tip - piv).normalized;
-
-        if (bucketRenderers == null) bucketRenderers = m.BucketTransform.GetComponentsInChildren<Renderer>();
-        Vector3 shell = Vector3.zero; int n = 0;
-        foreach (var r in bucketRenderers) if (r != null && r.enabled) { shell += r.bounds.center; n++; }
-        Vector3 open = Vector3.up;
-        if (n > 0)
-        {
-            Vector3 s = shell / n - mid;
-            s -= Vector3.Dot(s, axis) * axis;          // part across the pivot-teeth line
-            if (s.sqrMagnitude > 1e-4F) open = -s.normalized;
-        }
-
-        Vector3 viewDir = (open + Vector3.up * 0.8F).normalized;   // from the bucket towards the camera
-        if (viewDir.y < 0.35F) { viewDir.y = 0.35F; viewDir.Normalize(); }
-        Vector3 side = m.BucketTransform.right;                    // bucket hinge axis (across the bucket)
-        lookAt = mid - open * 0.15F;                               // a little inside the bucket
-        pos = mid + viewDir * intoBucketDistance + side * intoBucketSideShift;
+        Vector3 reachDir = mid - m.SwingCenter; reachDir.y = 0F;
+        reachDir = reachDir.sqrMagnitude > 0.01F ? reachDir.normalized : m.ForwardFlat;
+        Vector3 side = Vector3.Cross(Vector3.up, reachDir);         // right of the arm, seen from the cab
+        lookAt = mid;
+        pos = mid + Vector3.up * (0.8F * intoBucketDistance) - reachDir * (0.35F * intoBucketDistance) + side * intoBucketSideShift;
         float ground = TerrainDigger.CurrentGroundHeight(pos) + 0.4F;
         if (pos.y < ground) pos.y = ground;
     }
@@ -276,10 +283,17 @@ public class ContextViews : MonoBehaviour
                 lookAt = c - f * 10F;
                 break;
             case ContextView.BucketSide:
-                Vector3 ground = WorldBuilder.OnGround(tip);
-                pos = ground - side * (7F * z) + Vector3.up * 1.2F - reachDir * 1F;
-                lookAt = new Vector3(tip.x, Mathf.Min(tip.y, ground.y), tip.z);
+            {
+                // Side-on view of the BUCKET (not the ground): camera level with the bucket, a little above it,
+                // looking at the bucket and slightly down so the surface below it (ground or truck bed) is in view.
+                Vector3 bmid = (m.BucketPivotPosition + tip) / 2F;
+                float below = Mathf.Clamp(bmid.y - TerrainDigger.CurrentGroundHeight(bmid), 0F, 3F);
+                pos = bmid - side * (bucketSideDistance * z) + Vector3.up * 0.6F - reachDir * 0.5F;
+                float minY = TerrainDigger.CurrentGroundHeight(pos) + 0.5F;
+                if (pos.y < minY) pos.y = minY;
+                lookAt = bmid + Vector3.down * (0.35F * below);
                 break;
+            }
             case ContextView.OverBucket:
                 IntoBucket(out pos, out lookAt);
                 break;

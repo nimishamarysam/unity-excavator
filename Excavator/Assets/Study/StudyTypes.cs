@@ -41,7 +41,8 @@ public static class StudyDesign
     // The three scenarios. Their order is shuffled per condition block (see BuildTrials).
     static readonly StudyScenario[] scenarioOrder =
     {
-        StudyScenario.Easy_Driving, StudyScenario.Moderate_Digging, StudyScenario.Hard_DigAndDump
+        //StudyScenario.Easy_Driving, StudyScenario.Moderate_Digging, StudyScenario.Hard_DigAndDump
+        StudyScenario.Hard_DigAndDump
     };
 
     // Participant 1 gets row 0, participant 2 row 1, participant 3 row 2, participant 4 row 0 ...
@@ -127,7 +128,8 @@ public static class StudyDesign
                 return "Drive into the yellow box, then dig the marked trench to the target depth. Dump soil only on the small white square. " +
                        "Avoid the buried cable, the crossing pipe below the trench, and the worker.";
             default:
-                return "Load the truck as many times as you can before time runs out. Watch for workers and the power line.";
+                return "Load the truck 4 times before time runs out. The truck is out of reach: dig from the yellow box at the pit, " +
+                       "drive back along the lane (turn right, then left, around the barriers) to the yellow box at the truck, dump, and drive back. Watch for workers and the power line.";
         }
     }
 }

@@ -78,14 +78,69 @@ public static class WorldBuilder
     }
 
     // A site worker in high-visibility clothing. Returns the walker so the scenario can send it somewhere.
+    // A site worker built from simple shapes: boots, trousers, hi-vis vest with a reflective stripe,
+    // arms, hands, head and a hard hat. ~1.8 m tall. Legs and arms swing while walking (WorkerWalker).
+    // One capsule trigger collider (does not push the machine) carries the Worker hazard.
+    public static readonly Color Skin = new Color(0.86F, 0.67F, 0.52F);
+    public static readonly Color Trousers = new Color(0.16F, 0.18F, 0.24F);
+    public static readonly Color Boot = new Color(0.12F, 0.10F, 0.08F);
+
     public static WorkerWalker Worker(Transform parent, string name, Vector3 pos)
     {
-        var body = Shape(PrimitiveType.Capsule, parent, name, pos, new Vector3(0.6F, 0.9F, 0.6F), HiVis, 0, true);
-        body.GetComponent<Collider>().isTrigger = true;   // does not physically push the machine
-        var helmet = Shape(PrimitiveType.Sphere, body.transform, name + "_helmet", pos, new Vector3(0.35F, 0.25F, 0.35F), White, 0, false, 1.85F);
-        helmet.transform.localScale = new Vector3(0.55F, 0.3F, 0.55F);
-        AddHazard<ColliderHazard>(body, name, HazardKind.Worker, 5F, 0.4F);
-        return body.AddComponent<WorkerWalker>();
+        var root = new GameObject(name);
+        root.transform.SetParent(parent, true);
+        root.transform.position = OnGround(pos);
+        var col = root.AddComponent<CapsuleCollider>();
+        col.isTrigger = true;                       // does not physically push the machine
+        col.center = new Vector3(0, 0.9F, 0); col.height = 1.8F; col.radius = 0.3F;
+
+        Transform t = root.transform;
+        // Legs (pivot at the hip) with boots.
+        Transform legL = Pivot(t, "LegL", new Vector3(-0.11F, 0.92F, 0)), legR = Pivot(t, "LegR", new Vector3(0.11F, 0.92F, 0));
+        foreach (var leg in new[] { legL, legR })
+        {
+            Part(leg, PrimitiveType.Capsule, new Vector3(0, -0.44F, 0), new Vector3(0.17F, 0.45F, 0.17F), Trousers);
+            Part(leg, PrimitiveType.Cube, new Vector3(0, -0.87F, 0.05F), new Vector3(0.15F, 0.11F, 0.28F), Boot);
+        }
+        Part(t, PrimitiveType.Cube, new Vector3(0, 0.95F, 0), new Vector3(0.38F, 0.16F, 0.22F), Trousers);          // hips
+        Part(t, PrimitiveType.Cube, new Vector3(0, 1.26F, 0), new Vector3(0.44F, 0.56F, 0.25F), HiVis);             // vest
+        Part(t, PrimitiveType.Cube, new Vector3(0, 1.16F, 0), new Vector3(0.45F, 0.05F, 0.26F), new Color(0.85F, 0.85F, 0.85F)); // stripe
+        Part(t, PrimitiveType.Cube, new Vector3(0, 1.33F, 0), new Vector3(0.45F, 0.05F, 0.26F), new Color(0.85F, 0.85F, 0.85F));
+        // Arms (pivot at the shoulder) with hands.
+        Transform armL = Pivot(t, "ArmL", new Vector3(-0.28F, 1.5F, 0)), armR = Pivot(t, "ArmR", new Vector3(0.28F, 1.5F, 0));
+        foreach (var arm in new[] { armL, armR })
+        {
+            Part(arm, PrimitiveType.Capsule, new Vector3(0, -0.3F, 0), new Vector3(0.13F, 0.31F, 0.13F), HiVis);
+            Part(arm, PrimitiveType.Sphere, new Vector3(0, -0.62F, 0), new Vector3(0.1F, 0.11F, 0.1F), Skin);
+        }
+        Part(t, PrimitiveType.Cylinder, new Vector3(0, 1.58F, 0), new Vector3(0.1F, 0.05F, 0.1F), Skin);             // neck
+        Part(t, PrimitiveType.Sphere, new Vector3(0, 1.71F, 0), new Vector3(0.21F, 0.25F, 0.22F), Skin);            // head
+        Part(t, PrimitiveType.Sphere, new Vector3(0, 1.8F, -0.01F), new Vector3(0.27F, 0.17F, 0.29F), White);       // hard hat
+        Part(t, PrimitiveType.Cylinder, new Vector3(0, 1.77F, 0.02F), new Vector3(0.32F, 0.008F, 0.34F), White);    // brim
+
+        AddHazard<ColliderHazard>(root, name, HazardKind.Worker, 5F, 0.4F);
+        var w = root.AddComponent<WorkerWalker>();
+        w.SetLimbs(legL, legR, armL, armR);
+        return w;
+    }
+
+    static Transform Pivot(Transform parent, string name, Vector3 local)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = local;
+        return go.transform;
+    }
+
+    static GameObject Part(Transform parent, PrimitiveType type, Vector3 local, Vector3 size, Color color)
+    {
+        var go = GameObject.CreatePrimitive(type);
+        Object.Destroy(go.GetComponent<Collider>());
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = local;
+        go.transform.localScale = size;
+        go.GetComponent<Renderer>().sharedMaterial = MakeMaterial(color);
+        return go;
     }
 
     // Overhead power line between two poles.
@@ -109,22 +164,29 @@ public static class WorldBuilder
     }
 
     // A dump truck seen from the side: cab, chassis and an open box bed. Returns the bed's inside centre (at floor level).
+    // Truck bed inside size (m). Was 5.0 x 2.5.
+    public const float TruckBedLength = 6F, TruckBedWidth = 3.2F;
+
     public static Vector3 Truck(Transform parent, string name, Vector3 center, Vector3 forward, out Bounds bedArea)
     {
         forward = new Vector3(forward.x, 0, forward.z).normalized;
         Vector3 side = Vector3.Cross(Vector3.up, forward);
         float yaw = Quaternion.LookRotation(forward).eulerAngles.y;
-        float bedLen = 5F, bedW = 2.5F, floor = 1.3F, wall = 1.1F;
+        float bedLen = TruckBedLength, bedW = TruckBedWidth, floor = 1.3F, wall = 1.1F;
+        float bodyW = bedW - 0.1F;   // chassis and cab as wide as the bed
 
-        var chassis = Shape(PrimitiveType.Cube, parent, name + "_chassis", center, new Vector3(2.4F, 0.9F, 8F), Grey, yaw, true, 0.75F);
+        var chassis = Shape(PrimitiveType.Cube, parent, name + "_chassis", center, new Vector3(bodyW, 0.9F, 8.5F), Grey, yaw, true, 0.75F);
         AddHazard<ColliderHazard>(chassis, name, HazardKind.Truck, 0.8F, 0.1F);   // small warning distance: dumping over the bed is normal
-        Shape(PrimitiveType.Cube, parent, name + "_cab", center + forward * 3F, new Vector3(2.4F, 2.2F, 2F), Yellow, yaw, true, 2.3F);
-        Vector3 bedC = center - forward * 1F;
-        Shape(PrimitiveType.Cube, parent, name + "_bedFloor", bedC, new Vector3(bedW, 0.15F, bedLen), Yellow, yaw, true, floor);
-        Shape(PrimitiveType.Cube, parent, name + "_wallL", bedC - side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), Yellow, yaw, true, floor + wall / 2F);
-        Shape(PrimitiveType.Cube, parent, name + "_wallR", bedC + side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), Yellow, yaw, true, floor + wall / 2F);
-        Shape(PrimitiveType.Cube, parent, name + "_wallF", bedC + forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), Yellow, yaw, true, floor + wall / 2F);
-        Shape(PrimitiveType.Cube, parent, name + "_wallB", bedC - forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), Yellow, yaw, true, floor + wall / 2F);
+        var cab = Shape(PrimitiveType.Cube, parent, name + "_cab", center + forward * 3F, new Vector3(bodyW, 2.2F, 2F), Yellow, yaw, true, 2.3F);
+        Vector3 bedC = center - forward * 1.5F;   // bed between the cab (front) and the rear end
+        var bedFloor = Shape(PrimitiveType.Cube, parent, name + "_bedFloor", bedC, new Vector3(bedW, 0.15F, bedLen), Yellow, yaw, true, floor);
+        var wallL = Shape(PrimitiveType.Cube, parent, name + "_wallL", bedC - side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), Yellow, yaw, true, floor + wall / 2F);
+        var wallR = Shape(PrimitiveType.Cube, parent, name + "_wallR", bedC + side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), Yellow, yaw, true, floor + wall / 2F);
+        var wallF = Shape(PrimitiveType.Cube, parent, name + "_wallF", bedC + forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), Yellow, yaw, true, floor + wall / 2F);
+        var wallB = Shape(PrimitiveType.Cube, parent, name + "_wallB", bedC - forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), Yellow, yaw, true, floor + wall / 2F);
+        // The bucket and arm may not pass through any part of the truck (see BucketBlocker).
+        foreach (var part in new[] { chassis, cab, bedFloor, wallL, wallR, wallF, wallB })
+            BucketBlocker.Solids.Add(part.GetComponent<Collider>());
 
         Vector3 inside = OnGround(bedC, floor);
         bedArea = new Bounds(inside + Vector3.up * 2F, new Vector3(Mathf.Abs(side.x) * bedW + Mathf.Abs(forward.x) * bedLen,
@@ -144,11 +206,15 @@ public static class WorldBuilder
 public class WorkerWalker : MonoBehaviour
 {
     public float speed = 1.3F;
+    public float stride = 28F;          // leg swing in degrees while walking
     readonly Queue<(Vector3 pos, float wait)> route = new Queue<(Vector3, float)>();
-    float waitUntil;
+    float waitUntil, phase, swing;
     Hazard hazard;
+    Transform legL, legR, armL, armR;
 
     void Awake() { hazard = GetComponent<Hazard>(); }
+
+    public void SetLimbs(Transform ll, Transform lr, Transform al, Transform ar) { legL = ll; legR = lr; armL = al; armR = ar; }
 
     public void Hide() { gameObject.SetActive(false); }
 
@@ -156,29 +222,47 @@ public class WorkerWalker : MonoBehaviour
 
     public void Appear(Vector3 at)
     {
-        transform.position = WorldBuilder.OnGround(at, transform.localScale.y);
+        transform.position = WorldBuilder.OnGround(at);
         gameObject.SetActive(true);
         if (hazard != null) hazard.active = true;
     }
 
     void Update()
     {
-        if (route.Count == 0 || Time.time < waitUntil) return;
-        var (target, wait) = route.Peek();
-        Vector3 pos = transform.position;
-        Vector3 flat = new Vector3(target.x - pos.x, 0, target.z - pos.z);
-        float step = speed * Time.deltaTime;
-        if (flat.magnitude <= step)
+        bool walking = false;
+        if (route.Count > 0 && Time.time >= waitUntil)
         {
-            pos = new Vector3(target.x, pos.y, target.z);
-            route.Dequeue();
-            waitUntil = Time.time + wait;
+            var (target, wait) = route.Peek();
+            Vector3 pos = transform.position;
+            Vector3 flat = new Vector3(target.x - pos.x, 0, target.z - pos.z);
+            float step = speed * Time.deltaTime;
+            if (flat.magnitude <= step)
+            {
+                pos = new Vector3(target.x, pos.y, target.z);
+                route.Dequeue();
+                waitUntil = Time.time + wait;
+            }
+            else
+            {
+                pos += flat.normalized * step;
+                transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.LookRotation(flat), 360F * Time.deltaTime);
+                walking = step > 0F;
+            }
+            transform.position = WorldBuilder.OnGround(pos);
         }
-        else
-        {
-            pos += flat.normalized * step;
-            transform.rotation = Quaternion.LookRotation(flat);
-        }
-        transform.position = WorldBuilder.OnGround(pos, transform.localScale.y);
+        Animate(walking);
+    }
+
+    // Legs and arms swing in opposite directions while walking, and settle when standing.
+    void Animate(bool walking)
+    {
+        if (legL == null) return;
+        swing = Mathf.MoveTowards(swing, walking ? 1F : 0F, Time.deltaTime * 4F);
+        if (walking) phase += Time.deltaTime * speed * 5.5F;
+        float a = Mathf.Sin(phase) * stride * swing;
+        legL.localRotation = Quaternion.Euler(a, 0, 0);
+        legR.localRotation = Quaternion.Euler(-a, 0, 0);
+        armL.localRotation = Quaternion.Euler(-a * 0.8F, 0, 4F);
+        armR.localRotation = Quaternion.Euler(a * 0.8F, 0, -4F);
     }
 }

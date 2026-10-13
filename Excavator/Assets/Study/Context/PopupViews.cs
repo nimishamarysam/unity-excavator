@@ -26,17 +26,26 @@ public class PopupViews : MonoBehaviour
 {
     public float openDistanceObstacle = 4F;   // metres from the machine
     public float openDistanceWorker = 8F;
-    public float closeExtra = 1F;             // must move this much further away to close (no flicker)
-    public float closeDelay = 1F;             // seconds
+    public float closeExtra = 1.5F;           // must move this much further away to close (no flicker)
+    public float closeDelay = 2F;             // seconds the object must stay far before the window closes
+    public float minOpenSeconds = 4F;         // a window stays at least this long once opened
     public int maxPopups = 2;
     public Vector2 size = new Vector2(0.20F, 0.24F);   // fraction of the screen
     public float followSpeed = 8F;
 
     public float switchMargin = 0.5F;         // docked: switch to another object when it is this much closer
 
+    // true = obstacle cameras are always placed in the right-hand panel, never inside the driver view.
+    // One window in the bottom half of the panel, under the bird's-eye view (all scenarios). It shows the
+    // closest obstacle and switches when another one becomes clearly closer.
+    public static bool DockInPanel = true;
+
     ExcavatorController ctl;
     readonly List<Popup> popups = new List<Popup>();
-    bool docked;
+    bool docked, drivingDock;
+    // Dig and dump: the truck is the dump target, so it does not open the obstacle camera (unless touched),
+    // and the camera only opens while the machine is moving.
+    bool ignoreTruck, onlyWhileMoving;
 
     class Popup
     {
@@ -48,13 +57,18 @@ public class PopupViews : MonoBehaviour
         public Vector2 center;      // current screen position (0..1), smoothed
         public bool placed;
         public float farSince = -1F;
+        public float openedAt;
     }
 
     public void Init(ExcavatorController controller)
     {
         ctl = controller;
-        docked = ContextViews.UseDrivingLayout;
+        drivingDock = ContextViews.UseDrivingLayout;
+        docked = drivingDock || DockInPanel;   // one obstacle camera, bottom half of the panel, under the bird's-eye view
         if (docked) maxPopups = 1;
+        bool digDump = StudyManager.Instance != null && StudyManager.Instance.CurrentTrial.scenario == StudyScenario.Hard_DigAndDump;
+        ignoreTruck = digDump;
+        onlyWhileMoving = digDump;
     }
 
     void LateUpdate()
@@ -63,17 +77,25 @@ public class PopupViews : MonoBehaviour
         bool running = sm != null && sm.ShowContextViews && ctl != null && ctl.Machine != null &&
                        (sm.CurrentState == StudyManager.State.Running || sm.CurrentState == StudyManager.State.Paused);
         // Docked (driving scenario): in any mode. Floating: travel mode with the pop-up experiment switch on.
-        bool active = running && (docked || (ContextViews.PopupStyleForDriving && ctl.IsTravelMode));
+        bool active = running && (drivingDock || (ContextViews.PopupStyleForDriving && ctl.IsTravelMode));
         if (!active) { CloseAll(); return; }
 
         // Candidates: visible obstacles and workers inside their opening distance, closest first.
         var near = new List<Hazard>();
-        foreach (var h in Hazard.All)
-            if (h.active && h.gameObject.activeInHierarchy && IsPopupKind(h) && h.CurrentDistance <= OpenDistance(h)) near.Add(h);
+        var input = ctl.LastInput;
+        bool moving = ctl.Machine.SpeedKmh > 0.3F || input.trackLeft != 0F || input.trackRight != 0F;
+        if (!onlyWhileMoving || moving)
+            foreach (var h in Hazard.All)
+            {
+                if (!h.active || !h.gameObject.activeInHierarchy || !IsPopupKind(h) || h.CurrentDistance > OpenDistance(h)) continue;
+                if (ignoreTruck && h.kind == HazardKind.Truck && h.CurrentLevel != Hazard.Level.Contact) continue;
+                near.Add(h);
+            }
         near.Sort((a, b) => a.CurrentDistance.CompareTo(b.CurrentDistance));
 
         // Docked: keep showing the closest object; switch when another one is clearly closer.
         if (docked && popups.Count == 1 && near.Count > 0 && near[0] != popups[0].hazard &&
+            Time.unscaledTime - popups[0].openedAt > minOpenSeconds &&
             (popups[0].hazard == null || near[0].CurrentDistance < popups[0].hazard.CurrentDistance - switchMargin))
         {
             Close(popups[0]);
@@ -93,10 +115,14 @@ public class PopupViews : MonoBehaviour
         {
             var p = popups[i];
             bool gone = p.hazard == null || !p.hazard.active || !p.hazard.gameObject.activeInHierarchy;
-            bool far = gone || p.hazard.CurrentDistance > OpenDistance(p.hazard) + closeExtra;
+            // Closing depends only on distance (and the truck rule). "Only while moving" decides when a
+            // window may OPEN, not when it closes, so a window does not vanish when the machine pauses.
+            bool far = gone || p.hazard.CurrentDistance > OpenDistance(p.hazard) + closeExtra
+                       || (ignoreTruck && p.hazard.kind == HazardKind.Truck && p.hazard.CurrentLevel != Hazard.Level.Contact);
             if (far) { if (p.farSince < 0) p.farSince = Time.unscaledTime; }
             else p.farSince = -1F;
-            if (gone || (far && Time.unscaledTime - p.farSince > closeDelay)) { Close(p); popups.RemoveAt(i); continue; }
+            bool minTimeOver = Time.unscaledTime - p.openedAt > minOpenSeconds;
+            if (gone || (far && minTimeOver && Time.unscaledTime - p.farSince > closeDelay)) { Close(p); popups.RemoveAt(i); continue; }
             UpdatePopup(p, i);
         }
     }
@@ -106,7 +132,7 @@ public class PopupViews : MonoBehaviour
 
     Popup Open(Hazard h)
     {
-        var p = new Popup { hazard = h };
+        var p = new Popup { hazard = h, openedAt = Time.unscaledTime };
         var camGo = new GameObject("PopupCamera_" + h.hazardId);
         camGo.transform.SetParent(transform, false);
         p.cam = camGo.AddComponent<Camera>();
@@ -144,7 +170,7 @@ public class PopupViews : MonoBehaviour
         p.label = tGo.GetComponent<Text>();
         p.label.font = font; p.label.fontSize = 16; p.label.color = Color.white; p.label.alignment = TextAnchor.MiddleLeft;
         p.label.text = KindLabel(h);
-        if (docked) { p.label.fontSize = 18; p.label.rectTransform.parent.GetComponent<RectTransform>().sizeDelta = new Vector2(330, 30); }
+        if (docked || DockInPanel) { p.label.fontSize = 18; p.label.rectTransform.parent.GetComponent<RectTransform>().sizeDelta = new Vector2(330, 30); }
 
         StudyLogger.Log("popup_open", $"{h.hazardId};{h.kind};dist={h.CurrentDistance:F2}");
         return p;
@@ -173,7 +199,7 @@ public class PopupViews : MonoBehaviour
         p.cam.transform.position = camPos;
         p.cam.transform.rotation = Quaternion.LookRotation(gap - camPos, Vector3.up);
 
-        if (docked)
+        if (docked || DockInPanel)
         {
             Rect dock = StudyLayout.PanelSlot(1, 2);
             p.cam.rect = dock;

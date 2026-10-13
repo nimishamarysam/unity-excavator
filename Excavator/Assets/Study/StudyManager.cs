@@ -40,6 +40,15 @@ public class StudyManager : MonoBehaviour
     public TrialInfo CurrentTrial { get; private set; }
     public float TrialTime { get; private set; }
     public bool IsTrialRunning => CurrentState == State.Running;
+    // Time limit of the current trial: the scenario's own limit if it has one, else trialDurationSeconds.
+    public float TrialLimit
+    {
+        get
+        {
+            var sc = ScenarioRunner.Current;
+            return sc != null && sc.TimeLimitSeconds.HasValue ? sc.TimeLimitSeconds.Value : trialDurationSeconds;
+        }
+    }
     public ExcavatorController Controller { get; private set; }
 
     // What the other scripts should show in the current condition.
@@ -149,7 +158,7 @@ public class StudyManager : MonoBehaviour
 
             case State.Running:
                 TrialTime += Time.deltaTime;
-                float limit = CurrentTrial.scenario == StudyScenario.Practice ? practiceDurationSeconds : trialDurationSeconds;
+                float limit = CurrentTrial.scenario == StudyScenario.Practice ? practiceDurationSeconds : TrialLimit;
                 if (TrialTime >= limit) EndTrial("time_limit");
                 else if (abort) EndTrial("ended_by_experimenter");
                 else if (pause) { CurrentState = State.Paused; Freeze(true); StudyLogger.Log("pause"); }

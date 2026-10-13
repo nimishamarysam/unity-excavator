@@ -268,6 +268,27 @@ public class DrivingCues : MonoBehaviour
         {
             Set("SLOW DOWN - WORKER ABOUT TO CROSS", "SLOW_WORKER", CueKit.Warn);
         }
+        else if (root.Profile.bannerWithTarget)
+        {
+            // Name of the destination from the scenario, remaining path length, and a steering hint only
+            // when the path ahead is clearly off to one side.
+            string name = root.Scenario != null ? root.Scenario.RouteTargetName : "TARGET";
+            float thr = root.Profile.steerThreshold;
+            Vector3 fwd = m.ForwardFlat, opRight = Vector3.Cross(Vector3.up, fwd);
+            Vector3 look = CueKit.Flat(PointAt(Mathf.Min(4F, Length), out _)) - c;
+            Vector3 travelDir = reverse ? -fwd : fwd;
+            float off = look.sqrMagnitude > 0.01F ? Vector3.Angle(travelDir, look) : 0F;
+            bool toRight = Vector3.Dot(look, opRight) > 0F;
+            string verb = reverse ? "REVERSE" : "DRIVE";
+            string text = $"{verb} {Length:0.0} m TO THE {name}";
+            string code = verb + "_" + name.Replace(' ', '_');
+            if (off > thr)
+            {
+                if (reverse) { text += toRight ? "  -  PATH BENDS TO YOUR RIGHT" : "  -  PATH BENDS TO YOUR LEFT"; code += toRight ? "+BEND_RIGHT" : "+BEND_LEFT"; }
+                else { text = (toRight ? "STEER RIGHT >>  " : "<< STEER LEFT  ") + text; code += toRight ? "+STEER_RIGHT" : "+STEER_LEFT"; }
+            }
+            Set(text, code, CueKit.Guide);
+        }
         else if (reverse)
         {
             Vector3 end = CueKit.Flat(path[path.Count - 1]);
@@ -283,14 +304,15 @@ public class DrivingCues : MonoBehaviour
             // Steering: direction to a point 5 m ahead on the path, relative to where the tracks point.
             Vector3 look = CueKit.Flat(PointAt(Mathf.Min(5F, Length), out _)) - c;
             float angle = look.sqrMagnitude > 0.01F ? Vector3.SignedAngle(m.ForwardFlat, look, Vector3.up) : 0F;
-            string steer = angle > 15F ? "STEER RIGHT >>" : angle < -15F ? "<< STEER LEFT" : "^ STRAIGHT AHEAD";
-            string code = angle > 15F ? "STEER_RIGHT" : angle < -15F ? "STEER_LEFT" : "STRAIGHT";
+            float thr = root.Profile.steerThreshold;
+            string steer = angle > thr ? "STEER RIGHT >>" : angle < -thr ? "<< STEER LEFT" : "^ STRAIGHT AHEAD";
+            string code = angle > thr ? "STEER_RIGHT" : angle < -thr ? "STEER_LEFT" : "STRAIGHT";
 
             // Nearest obstacle the path bends around.
             Hazard nearest = null;
             foreach (var kv in root.PassAdvice)
                 if (kv.Key != null && (nearest == null || kv.Key.CurrentDistance < nearest.CurrentDistance)) nearest = kv.Key;
-            if (nearest != null && nearest.CurrentDistance < 12F)
+            if (root.Profile.passAdviceInBanner && nearest != null && nearest.CurrentDistance < 12F)
             {
                 bool right = root.PassAdvice[nearest].Contains("RIGHT");
                 steer += right ? "   |   PASS THE OBSTACLE ON ITS RIGHT" : "   |   PASS THE OBSTACLE ON ITS LEFT";

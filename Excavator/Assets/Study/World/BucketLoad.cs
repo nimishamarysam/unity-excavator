@@ -49,11 +49,12 @@ public class BucketLoad : MonoBehaviour
     public void Init(Excavator m)
     {
         machine = m;
-        lump = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        lump.name = "SoilInBucket";
-        Destroy(lump.GetComponent<Collider>());
-        lump.GetComponent<Renderer>().sharedMaterial = SoilMaterial();
+        // Soil in the bucket: a rough heap (same mound shape as the heaps on the ground) that stays upright.
+        lump = new GameObject("SoilInBucket");
+        lump.AddComponent<MeshFilter>().sharedMesh = SoilHeap.MoundMesh(7);
+        lump.AddComponent<MeshRenderer>().sharedMaterial = SoilMaterial();
         lump.SetActive(false);
+        AttachLumpToBucket(m);
         prevTip = m.BucketTipPosition;
         prevAngle = m.bucketAngle;
     }
@@ -116,8 +117,9 @@ public class BucketLoad : MonoBehaviour
         if (lump.activeSelf != show) lump.SetActive(show);
         if (show)
         {
-            lump.transform.position = Vector3.Lerp(pivot, tip, 0.45F) + Vector3.up * 0.15F;
-            lump.transform.localScale = Vector3.Lerp(new Vector3(0.3F, 0.15F, 0.3F), new Vector3(0.9F, 0.55F, 0.9F), Fill);
+            // The heap is a child of the bucket: base in the bucket's hollow, heaped out of the opening.
+            float r = Mathf.Lerp(0.2F, 0.45F, Fill);
+            lump.transform.localScale = new Vector3(r, Mathf.Lerp(0.05F, 0.3F, Fill), r) * lumpScale;
         }
 
         // Dump: bucket opened wide while lifted out of the hole.
@@ -126,6 +128,37 @@ public class BucketLoad : MonoBehaviour
 
         prevTip = tip;
         prevAngle = angle;
+    }
+
+    // Puts the soil heap inside the bucket and keeps it there (child of the bucket transform).
+    // The bucket's opening side is found once from its shape in the bucket's OWN coordinates (so it does not
+    // depend on how the bucket is rotated): the bucket shell lies on one side of the hinge->teeth line, the
+    // hollow and the opening on the other.
+    float lumpScale = 1F;
+    void AttachLumpToBucket(Excavator m)
+    {
+        Transform b = m.BucketTransform;
+        Vector3 tipL = b.InverseTransformPoint(m.BucketTipPosition);
+        Vector3 midL = tipL * 0.5F;                          // hinge is the bucket transform's origin
+        Vector3 axisL = tipL.sqrMagnitude > 1e-6F ? tipL.normalized : Vector3.forward;
+        Vector3 shell = Vector3.zero; int n = 0;
+        foreach (var rd in b.GetComponentsInChildren<Renderer>())
+        {
+            if (rd == null) continue;
+            shell += b.InverseTransformPoint(rd.transform.TransformPoint(rd.localBounds.center)); n++;
+        }
+        Vector3 s = n > 0 ? shell / n - midL : Vector3.zero;
+        s -= Vector3.Dot(s, axisL) * axisL;                  // across the hinge->teeth line, towards the shell
+        Vector3 openL = s.sqrMagnitude > 1e-6F ? -s.normalized : Vector3.Cross(axisL, Vector3.right).normalized;
+        float len = tipL.magnitude;
+        // Base of the heap a little into the hollow (towards the shell), heap pointing out of the opening.
+        Vector3 baseL = midL - openL * (0.25F * len);
+        lump.transform.SetParent(b, false);
+        lump.transform.localPosition = baseL;
+        lump.transform.localRotation = Quaternion.LookRotation(axisL, openL);   // mound "up" = out of the opening
+        // Compensate for a scaled bucket transform so the heap keeps its size in metres.
+        Vector3 ls = b.lossyScale;
+        lumpScale = 1F / Mathf.Max(0.01F, (Mathf.Abs(ls.x) + Mathf.Abs(ls.y) + Mathf.Abs(ls.z)) / 3F);
     }
 
     void Dump(Vector3 at)
@@ -176,12 +209,12 @@ public class SoilFall : MonoBehaviour
     {
         target = to; amount = amt; heapParent = parent;
         transform.position = from;
-        chunk = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        Destroy(chunk.GetComponent<Collider>());
+        chunk = new GameObject("Chunk");
+        chunk.AddComponent<MeshFilter>().sharedMesh = SoilHeap.MoundMesh(11);
+        chunk.AddComponent<MeshRenderer>().sharedMaterial = BucketLoad.SoilMaterial();
         chunk.transform.SetParent(transform, false);
-        float s = Mathf.Lerp(0.4F, 0.9F, amt);
-        chunk.transform.localScale = new Vector3(s, s * 0.7F, s);
-        chunk.GetComponent<Renderer>().sharedMaterial = BucketLoad.SoilMaterial();
+        float s = Mathf.Lerp(0.25F, 0.5F, amt);
+        chunk.transform.localScale = new Vector3(s, s * 0.8F, s);
     }
 
     void Update()
@@ -231,13 +264,21 @@ public class SoilHeap : MonoBehaviour
         transform.localScale = new Vector3(r, r * 0.55F, r);
     }
 
-    // A unit mound (radius 1, height 1) with a slightly uneven surface.
     void Build()
     {
+        gameObject.AddComponent<MeshFilter>().sharedMesh = MoundMesh(UnityEngine.Random.Range(0, int.MaxValue));   // a slightly different shape for each heap
+        gameObject.AddComponent<MeshRenderer>().sharedMaterial = BucketLoad.SoilMaterial();
+    }
+
+    // A unit mound (radius 1, height 1) with a slightly uneven surface. Same seed = same shape.
+    static readonly Dictionary<int, Mesh> mounds = new Dictionary<int, Mesh>();
+    public static Mesh MoundMesh(int seed)
+    {
+        if (mounds.TryGetValue(seed, out var cached) && cached != null) return cached;
         const int rings = 6, segs = 18;
         var verts = new List<Vector3>();
         var tris = new List<int>();
-        var rnd = new System.Random(UnityEngine.Random.Range(0, int.MaxValue));   // a slightly different shape for each heap
+        var rnd = new System.Random(seed);
         verts.Add(new Vector3(0, 1F, 0));                       // top
         for (int r = 1; r <= rings; r++)
         {
@@ -266,8 +307,8 @@ public class SoilHeap : MonoBehaviour
         mesh.SetTriangles(tris, 0);
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
-        gameObject.AddComponent<MeshFilter>().sharedMesh = mesh;
-        gameObject.AddComponent<MeshRenderer>().sharedMaterial = BucketLoad.SoilMaterial();
+        if (seed < 1000) mounds[seed] = mesh;   // keep the fixed shapes (bucket, falling chunk); heaps get their own
+        return mesh;
     }
 
     void OnDestroy() { heaps.Remove(this); }

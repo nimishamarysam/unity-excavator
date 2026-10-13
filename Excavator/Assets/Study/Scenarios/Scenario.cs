@@ -24,20 +24,62 @@ public abstract class Scenario : MonoBehaviour
     // Where loaded soil should go (truck bed or spoil square), or null if the scenario has no dumping.
     public virtual Vector3? DumpTarget => null;
 
+    // The area soil should be dumped into (truck bed or spoil square), for the C3 dump marker.
+    // Returns false if the scenario has none.
+    public virtual bool DumpArea(out Vector3 center, out Vector3 forward, out float length, out float width)
+    { center = forward = Vector3.zero; length = width = 0F; return false; }
+
     // For the C3 driving cue: the rest of the route as ground points in driving order
     // (null = no route). 'reverse' = the machine should drive backwards to these points.
     public virtual System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse) { reverse = false; return null; }
 
+    // Name of the current route destination for the C3 banner (e.g. "DUMP BOX").
+    public virtual string RouteTargetName => "STOP LINE";
+
     // For the C3 digging cues: target depth of the dig zone below the original ground in metres
     // (null = use the zone's maximum depth).
     public virtual float? DigTargetDepth => null;
+
+    // Time limit of this scenario in seconds (null = StudyManager.trialDurationSeconds).
+    public virtual float? TimeLimitSeconds => null;
 
     public void Setup(ExcavatorController ctl, TrialInfo trial)
     {
         Ctl = ctl; M = ctl.Machine; Trial = trial;
         Rng = new System.Random(trial.seed);
         Root = transform;
+        BucketBlocker.Solids.Clear();
+        if (StartRetracted) Retract();
         Build();
+    }
+
+    // START POSTURE: true = every trial starts with the boom fully raised and the arm hanging vertically
+    // (fully retracted, compact). The bucket keeps its angle. false = posture from the scene.
+    public static bool StartRetracted = true;
+
+    // Finds the boom angle that lifts the boom-arm joint highest, then the arm angle that makes the
+    // arm point straight down. Searched numerically so it does not depend on the model's angle conventions.
+    void Retract()
+    {
+        float bestBoom = M.boomAngle, bestY = float.MinValue;
+        for (float a = 0F; a <= 56F; a += 1F)
+        {
+            M.boomAngle = a;
+            float y = M.BoomArmJointPosition.y;
+            if (y > bestY) { bestY = y; bestBoom = a; }
+        }
+        M.boomAngle = bestBoom;
+
+        float bestArm = M.armAngle, bestDev = float.MaxValue;
+        for (float a = 0F; a <= 120F; a += 1F)
+        {
+            M.armAngle = a;
+            float dev = Vector3.Angle(M.ArmBucketJointPosition - M.BoomArmJointPosition, Vector3.down);
+            if (dev < bestDev) { bestDev = dev; bestArm = a; }
+        }
+        M.armAngle = bestArm;
+        Physics.SyncTransforms();
+        StudyLogger.Log("start_posture", $"boom={bestBoom:F0};arm={bestArm:F0};arm_from_vertical={bestDev:F1};bucket={M.bucketAngle:F0}");
     }
 
     protected abstract void Build();
@@ -102,6 +144,7 @@ public abstract class Scenario : MonoBehaviour
 
 public class ScenarioRunner : MonoBehaviour
 {
+    public static Scenario Current { get; private set; }
     Scenario current;
     GUIStyle title, body;
 
@@ -135,12 +178,14 @@ public class ScenarioRunner : MonoBehaviour
             case StudyScenario.Moderate_Digging: current = go.AddComponent<DiggingScenario>(); break;
             default: current = go.AddComponent<DigDumpScenario>(); break;
         }
+        Current = current;
         current.Setup(sm.Controller, trial);
         go.AddComponent<HazardTracker>().Init(sm.Controller);   // after Setup, so it sees the final collider set
         go.AddComponent<ContextMonitor>().Init(sm.Controller, current);
         go.AddComponent<ContextViews>().Init(sm.Controller);    // only visible in C2 and C3
         go.AddComponent<PopupViews>().Init(sm.Controller);      // C2/C3, travel mode, when ContextViews.PopupStyleForDriving
-        go.AddComponent<AttentionCues>().Init(sm.Controller, current);   // only visible in C3
+        go.AddComponent<AttentionCues>().Init(sm.Controller, current);
+        go.AddComponent<BucketBlocker>().Init(sm.Controller);   // bucket/arm cannot pass through the truck   // only visible in C3
         StudyLogger.Log("scenario_ready", trial.scenario.ToString());
     }
 

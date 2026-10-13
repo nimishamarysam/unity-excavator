@@ -82,6 +82,7 @@ public class AttentionCues : MonoBehaviour
         Driving = gameObject.AddComponent<DrivingCues>();
         Driving.Init(this);
         gameObject.AddComponent<DiggingCues>().Init(this);
+        gameObject.AddComponent<TruckProximityCue>().Init(this);
 
         WorldRoot.gameObject.SetActive(false);
         CanvasRoot.gameObject.SetActive(false);
@@ -131,15 +132,27 @@ public class CueProfile
     public bool workerMotionArrow = true;        // ground arrow of the worker's next 2 s (context views)
     public bool groundRing = true;               // ring on the ground around obstacles (context views)
     public bool edgeMarkersForAll = true;        // false = edge markers only for workers at warning level
+    public bool edgeMarkersWorkersOnly = false;  // true = edge markers only for workers (overrides the above)
+    public bool staticOnlyAtWarning = false;     // static obstacles only once at warning distance
+    public bool truckOnlyAtContact = false;      // the truck is the dump target: cue only at contact
+    public bool obstaclesHiddenInDigMode = false;// in digging mode: no boxes for lane obstacles (except contact)
+    public bool workerMotionOnlyApproaching = false; // motion text only when the worker comes towards the machine
+    public int maxObstacleCues = 0;              // > 0: show only this many obstacle cues, most urgent first
+    public bool thinHighlight = false;           // thinner 3D boxes in the context views
+    public bool truckWallProximity = false;      // truck bed walls light up when the bucket/arm gets close
 
     // Driving cue detail
     public bool steeringBanner = true;           // false = banner only for STOP / SLOW (workers)
     public bool pathEndRing = true;
+    public bool bannerWithTarget = false;        // "REVERSE 7.0 m TO THE DUMP BOX" (target name from the scenario)
+    public float steerThreshold = 15F;           // degrees off the path before "STEER LEFT/RIGHT" is shown
+    public bool passAdviceInBanner = true;       // "PASS THE OBSTACLE ON ITS ..." added to the banner
 
     // Digging cue detail
     public bool trajectoryInBucketSideViewOnly = false;   // true = bucket path drawn only in the BUCKET SIDE VIEW
     public bool bucketSideHeightArrow = false;            // vertical arrow + height/depth in the BUCKET SIDE VIEW
     public bool bucketSideAngleLabel = false;             // current bucket angle next to the bucket in that view
+    public bool heightArrowInDriverView = false;          // the height arrow (and its label) also in the driver view
 
     public static CueProfile For(StudyScenario s)
     {
@@ -165,8 +178,23 @@ public class CueProfile
                     name = "digging",
                     trajectoryInBucketSideViewOnly = true,
                     bucketSideHeightArrow = true,
-                    bucketSideAngleLabel = true,
+                    bucketSideAngleLabel = true, heightArrowInDriverView = true,
                     groundRing = false, pathEndRing = false,
+                };
+            case StudyScenario.Hard_DigAndDump:
+                // Dig and dump: only what needs action now. Static obstacles only at warning distance, at most
+                // two obstacle cues, truck only at contact, edge markers only for workers, short labels, thin
+                // highlights, no ground rings. Banner names the DIG / DUMP box; steering hint only when > 25 deg off.
+                // Digging mode: no lane-obstacle boxes; digging overlays as in the Digging scenario.
+                return new CueProfile
+                {
+                    name = "digdump",
+                    staticOnlyAtWarning = true, truckOnlyAtContact = true, obstaclesHiddenInDigMode = true,
+                    maxObstacleCues = 2, edgeMarkersWorkersOnly = true, workerMotionOnlyApproaching = true,
+                    workerMotionArrow = false, groundRing = false, thinHighlight = true,
+                    bannerWithTarget = true, steerThreshold = 25F, passAdviceInBanner = false, pathEndRing = false,
+                    trajectoryInBucketSideViewOnly = true, bucketSideHeightArrow = true, bucketSideAngleLabel = true,
+                    truckWallProximity = true, heightArrowInDriverView = true,
                 };
             default:
                 return new CueProfile();

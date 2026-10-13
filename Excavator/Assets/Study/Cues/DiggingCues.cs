@@ -54,7 +54,7 @@ public class DiggingCues : MonoBehaviour
     LineRenderer approach, cut, entryRing;
     readonly List<LineRenderer> arrows = new List<LineRenderer>();
     LineRenderer heightArrow, targetTick;
-    TextMesh heightText, angleText;
+    ScreenBox heightText, heightTextDriver, angleText;
     // Ideal curl keyframes: index into cutPts and angle of the teeth->pivot line from vertical,
     // tipped towards "out" (away from the machine). 20 = bucket upright, 105 = fully curled.
     readonly List<(int idx, float phi)> curlKeys = new List<(int, float)>();
@@ -85,10 +85,13 @@ public class DiggingCues : MonoBehaviour
         entryRing = CueKit.Line(w, "CueTrajEntry", 0.06F, true, true, trajLayer);
         for (int i = 0; i < 8; i++) arrows.Add(CueKit.Line(w, "CueTrajArrow", 0.06F, true, false, trajLayer));
 
-        heightArrow = CueKit.Line(w, "CueHeightArrow", 0.05F, true, false, side);
-        targetTick  = CueKit.Line(w, "CueTargetTick", 0.05F, true, false, side);
-        heightText  = MakeText(w, "CueHeightText", side, r.Font);
-        angleText   = MakeText(w, "CueAngleText", side, r.Font);
+        // Height arrow: bucket side view only, or (profile option) also in the driver view (default layer).
+        int arrowLayer = r.Profile.heightArrowInDriverView ? 0 : side;
+        heightArrow = CueKit.Line(w, "CueHeightArrow", 0.05F, true, false, arrowLayer);
+        targetTick  = CueKit.Line(w, "CueTargetTick", 0.05F, true, false, arrowLayer);
+        heightText       = new ScreenBox(r.CanvasRoot, r.Font, "CueHeightLabel", 17);
+        heightTextDriver = new ScreenBox(r.CanvasRoot, r.Font, "CueHeightLabelDriver", 17);
+        angleText        = new ScreenBox(r.CanvasRoot, r.Font, "CueAngleLabel", 17);
     }
 
     TerrainDigger Digger => TerrainDigger.Instance;
@@ -116,7 +119,9 @@ public class DiggingCues : MonoBehaviour
         if (wantTraj != trajShown) { trajShown = wantTraj; AttentionCues.LogCue(wantTraj, "bucket_trajectory", wantTraj ? EntryText() : ""); }
         if (wantTraj) DrawTrajectory(); else HideTrajectory();
 
-        if (op && root.Profile.bucketSideHeightArrow && ContextViews.BucketSideCamera != null && BucketInDigArea()) DrawHeightArrow();
+        bool overDump = OverDumpArea();
+        if (op && root.Profile.bucketSideHeightArrow && ContextViews.BucketSideCamera != null && (BucketInDigArea() || overDump))
+            DrawHeightArrow(overDump && !BucketInDigArea());
         else HideHeightArrow();
     }
 
@@ -124,13 +129,37 @@ public class DiggingCues : MonoBehaviour
 
     // Only while digging: teeth over the dig area (0.3 m margin) and lower than 1.5 m above the original
     // ground (same rule as the "Digging" phase of the ContextMonitor, without its 0.5 s delay).
+    // Teeth over the dump area (truck bed / spoil square), with 1 m margin.
+    bool OverDumpArea()
+    {
+        if (root.Scenario == null || !root.Scenario.DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid)) return false;
+        fw = CueKit.Flat(fw).normalized;
+        Vector3 rel = CueKit.Flat(root.M.BucketTipPosition - c), sd = Vector3.Cross(Vector3.up, fw);
+        return Mathf.Abs(Vector3.Dot(rel, fw)) < len / 2F + 1F && Mathf.Abs(Vector3.Dot(rel, sd)) < wid / 2F + 1F;
+    }
+
+    // First surface straight below the teeth that is not the machine (truck bed floor, wall top or ground).
+    Vector3 SurfaceBelow(Vector3 tip, out string what)
+    {
+        what = "ground";
+        Vector3 g = new Vector3(tip.x, TerrainDigger.CurrentGroundHeight(tip), tip.z);
+        float best = float.MaxValue;
+        foreach (var h in Physics.RaycastAll(tip + Vector3.up * 0.05F, Vector3.down, 30F, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (h.collider.transform.IsChildOf(root.M.transform) || h.distance >= best) continue;
+            best = h.distance; g = h.point;
+            what = h.collider.name.Contains("_bedFloor") ? "truck bed" : h.collider.name.Contains("_wall") ? "truck wall" : "ground";
+        }
+        return g;
+    }
+
     bool BucketInDigArea()
     {
         Vector3 tip = root.M.BucketTipPosition;
         return Digger.Contains(tip, 0.3F) && tip.y - TerrainDigger.ReferenceGroundHeight(tip) < 1.5F;
     }
 
-    void DrawHeightArrow()
+    void DrawHeightArrow(bool overDump)
     {
         var m = root.M;
         var cam = ContextViews.BucketSideCamera;
@@ -143,7 +172,18 @@ public class DiggingCues : MonoBehaviour
         Vector3 off = toCam.sqrMagnitude > 0.01F ? toCam.normalized * 0.5F : Vector3.zero;
         Vector3 top, bottom;
         string txt; Color c;
-        if (tip.y >= refY)
+        if (overDump)
+        {   // over the truck / spoil square: arrow from the teeth down to the nearest surface below
+            // (bed floor, wall top or ground)
+            Vector3 s = SurfaceBelow(tip, out string what);
+            top = tip + off;
+            bottom = s + off;
+            float gap = tip.y - s.y;
+            txt = $"{gap:0.00} m to {what}";
+            c = what == "truck wall" ? CueKit.Warn : CueKit.Guide;
+            CueKit.Hide(targetTick);
+        }
+        else if (tip.y >= refY)
         {   // above the ground: arrow from the teeth down to the ground below them
             top = tip + off;
             bottom = new Vector3(tip.x, Mathf.Min(curY, tip.y), tip.z) + off;
@@ -181,7 +221,9 @@ public class DiggingCues : MonoBehaviour
         heightArrow.SetPosition(7, bottom + Vector3.up * 0.18F - side);
         CueKit.Paint(heightArrow, c);
 
-        PlaceText(heightText, cam, (top + bottom) / 2F + off * 0.6F, txt, c);
+        PlaceText(heightText, cam, (top + bottom) / 2F, txt, c);
+        if (root.Profile.heightArrowInDriverView) PlaceText(heightTextDriver, m.OperatorCamera, (top + bottom) / 2F, txt.Replace("\n", "  "), c);
+        else HideText(heightTextDriver);
     }
 
     void HideHeightArrow()
@@ -189,40 +231,27 @@ public class DiggingCues : MonoBehaviour
         CueKit.Hide(heightArrow);
         CueKit.Hide(targetTick);
         HideText(heightText);
+        HideText(heightTextDriver);
     }
 
     // ---------- small world-space text (drawn on top, facing the given camera) ----------
 
-    static TextMesh MakeText(Transform parent, string name, int layer, Font font)
+    // Readable labels: a coloured tag with dark text (screen-space UI), placed next to a world point as seen
+    // by the given camera, inside that camera's window. Hidden when the point is outside the window.
+    static void PlaceText(ScreenBox box, Camera cam, Vector3 world, string text, Color c)
     {
-        var go = new GameObject(name) { layer = layer };
-        go.transform.SetParent(parent, false);
-        var tm = go.AddComponent<TextMesh>();
-        tm.font = font;
-        tm.fontSize = 48;
-        tm.characterSize = 0.035F;
-        tm.anchor = TextAnchor.MiddleLeft;
-        tm.fontStyle = FontStyle.Bold;
-        var mr = go.GetComponent<MeshRenderer>();
-        mr.sharedMaterial = font.material;
-        mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        go.SetActive(false);
-        return tm;
+        if (cam == null) { box.Hide(); return; }
+        Vector3 vp = cam.WorldToViewportPoint(world);
+        if (vp.z <= 0F || vp.x < 0F || vp.x > 1F || vp.y < 0F || vp.y > 1F) { box.Hide(); return; }
+        Rect r = cam.rect;
+        Vector2 p = new Vector2(r.xMin + vp.x * r.width, r.yMin + vp.y * r.height);
+        bool rightHalf = vp.x > 0.6F;   // keep the tag inside the window
+        p.x += (rightHalf ? -1F : 1F) * 0.006F;
+        c.a = 1F;
+        box.ShowTag(p, new Vector2(rightHalf ? 1F : 0F, 0.5F), c, text);
     }
 
-    static void PlaceText(TextMesh tm, Camera cam, Vector3 pos, string text, Color c)
-    {
-        if (!tm.gameObject.activeSelf) tm.gameObject.SetActive(true);
-        // Keep the text the same size on screen, whatever the camera distance.
-        float dist = Mathf.Max(1F, (pos - cam.transform.position).magnitude);
-        tm.characterSize = 0.0045F * dist;
-        tm.transform.position = pos + cam.transform.right * 0.15F * dist / 7F;
-        tm.transform.rotation = Quaternion.LookRotation(pos - cam.transform.position, Vector3.up);
-        if (tm.text != text) tm.text = text;
-        tm.color = c;
-    }
-
-    static void HideText(TextMesh tm) { if (tm != null && tm.gameObject.activeSelf) tm.gameObject.SetActive(false); }
+    static void HideText(ScreenBox box) { if (box != null) box.Hide(); }
 
     // ---------- cue 3: dig area ----------
 
@@ -261,13 +290,26 @@ public class DiggingCues : MonoBehaviour
         else if (edge != null && edge.CurrentLevel == Hazard.Level.Warning) bc = CueKit.Alpha(CueKit.Warn, CueKit.Pulse(6F, 0.5F));
         CueKit.Paint(boundary, bc);
 
-        // Teeth projection on the ground: only when the bucket is open more than the threshold.
+        // Loaded bucket near the dump area (truck bed / spoil square): dump marker instead of the dig marker.
+        // Empty bucket away from the dig area (or loaded and away from the dump area): no marker.
+        bool loaded = load != null && load.IsLoaded;
+        if (loaded && root.Scenario != null && root.Scenario.DumpArea(out Vector3 dc, out Vector3 dfw, out float dl, out float dw)
+            && DumpMarker(m, tip, dc, dfw, dl, dw)) return;
+
+        // Dig marker (teeth projection on the ground): only when the bucket is open more than the threshold.
         if (m.bucketAngle <= markerMinBucketAngle)
         {
             CueKit.Hide(ring); CueKit.Hide(ring2); CueKit.Hide(cross); CueKit.Hide(drop);
             if (tipState != "hidden") { tipState = "hidden"; StudyLogger.Log("cue_teeth_marker", $"hidden;bucket_angle={m.bucketAngle:F0}"); }
             return;
         }
+        if (loaded || !d.Contains(tip, 1.5F))
+        {
+            CueKit.Hide(ring); CueKit.Hide(ring2); CueKit.Hide(cross); CueKit.Hide(drop);
+            if (tipState != "off") { tipState = "off"; StudyLogger.Log("cue_teeth_marker", "off"); }
+            return;
+        }
+
         float groundY = TerrainDigger.CurrentGroundHeight(tip);
         Vector3 g = new Vector3(tip.x, Mathf.Min(groundY, tip.y) + 0.04F, tip.z);
         float depthHere = refY - Mathf.Min(tip.y, groundY);   // how deep the ground (or the teeth) is at this spot
@@ -305,6 +347,55 @@ public class DiggingCues : MonoBehaviour
             CueKit.Paint(drop, CueKit.Alpha(col, 0.6F));
         }
         else CueKit.Hide(drop);
+    }
+
+    // Dump marker: ring + cross where the soil would land (on the truck bed floor, found by a ray straight
+    // down from the teeth), coloured by how far inside the dump area it is:
+    //   green = well inside, yellow -> orange = close to the edge / wall, red (blinking) = outside (spill).
+    // Shown when the loaded bucket is within 3 m of the dump area. Returns false when not shown.
+    bool DumpMarker(Excavator m, Vector3 tip, Vector3 c, Vector3 fw, float len, float wid)
+    {
+        fw = CueKit.Flat(fw).normalized;
+        Vector3 sd = Vector3.Cross(Vector3.up, fw), rel = CueKit.Flat(tip - c);
+        float du = Mathf.Abs(Vector3.Dot(rel, fw)) / (len / 2F), dv = Mathf.Abs(Vector3.Dot(rel, sd)) / (wid / 2F);
+        float u = Mathf.Max(du, dv);                                   // 0 = centre, 1 = edge
+        float outside = Mathf.Max(0F, Mathf.Max(Mathf.Abs(Vector3.Dot(rel, fw)) - len / 2F, Mathf.Abs(Vector3.Dot(rel, sd)) - wid / 2F));
+        if (outside > 3F) return false;
+
+        Color col; string state;
+        if (u <= 0.5F) { col = CueKit.Good; state = "dump_centre"; }
+        else if (u <= 0.85F) { col = Color.Lerp(CueKit.Good, CueKit.Look, (u - 0.5F) / 0.35F); state = "dump_inside"; }
+        else if (u <= 1F) { col = Color.Lerp(CueKit.Look, CueKit.Warn, (u - 0.85F) / 0.15F); state = "dump_edge"; }
+        else { col = CueKit.Alpha(CueKit.Danger, CueKit.Pulse(8F, 0.5F)); state = "dump_outside"; }
+        if (state != tipState) { tipState = state; StudyLogger.Log("cue_teeth_marker", $"{state};u={u:F2}"); }
+
+        // Where the soil would land: first thing below the teeth that is not the machine.
+        Vector3 g = new Vector3(tip.x, TerrainDigger.CurrentGroundHeight(tip), tip.z);
+        var hits = Physics.RaycastAll(tip + Vector3.up * 0.05F, Vector3.down, 30F, ~0, QueryTriggerInteraction.Ignore);
+        float best = float.MaxValue;
+        foreach (var h in hits)
+            if (!h.collider.transform.IsChildOf(m.transform) && h.distance < best) { best = h.distance; g = h.point; }
+        g += Vector3.up * 0.05F;
+
+        CueKit.FlatCircle(ring, g, 0.45F);
+        CueKit.Paint(ring, col);
+        CueKit.FlatCircle(ring2, g, 0.25F);
+        CueKit.Paint(ring2, CueKit.Alpha(col, 0.7F));
+        Vector3 a = fw * 0.3F, b = sd * 0.3F;
+        cross.loop = false;
+        cross.positionCount = 5;
+        cross.SetPosition(0, g - a); cross.SetPosition(1, g + a); cross.SetPosition(2, g);
+        cross.SetPosition(3, g - b); cross.SetPosition(4, g + b);
+        CueKit.Paint(cross, col);
+        if (tip.y - g.y > 0.15F)
+        {
+            drop.positionCount = 2;
+            drop.SetPosition(0, tip);
+            drop.SetPosition(1, g);
+            CueKit.Paint(drop, CueKit.Alpha(col, 0.6F));
+        }
+        else CueKit.Hide(drop);
+        return true;
     }
 
     static bool Near(HazardKind kind)

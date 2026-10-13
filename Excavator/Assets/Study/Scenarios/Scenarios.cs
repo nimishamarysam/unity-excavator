@@ -17,6 +17,7 @@ public class PracticeScenario : Scenario
     public override string TaskText => "Practice: try driving, digging and dumping";
     public override Vector3? DumpTarget => spoil;
     public override string ProgressText => $"Dig in the brown square, dump on the white square.  Dumps: {dumps}";
+    public override bool DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid) { c = spoil; fw = f; len = wid = 3.5F; return true; }
 
     protected override void Build()
     {
@@ -202,6 +203,7 @@ public class DiggingScenario : Scenario
                                                : "Drive into the yellow box (press B for travel mode)";
     public override Vector3? DumpTarget => spoil;
     public override float? DigTargetDepth => TargetDepth;
+    public override bool DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid) { c = spoil; fw = f; len = wid = SpoilSize; return true; }
     public override string ProgressText => arrived
         ? $"Trench done: {TerrainDigger.Instance.FractionDugTo(TargetDepth) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
           "Dump soil ONLY on the small white square. Avoid the orange cable and the yellow pipe markers."
@@ -394,78 +396,177 @@ public class DiggingScenario : Scenario
         $"bucket_over_worker={bucketOverWorker};swing_toward_worker={swingTowardWorker};arrived={(arrived ? 1 : 0)}";
 }
 
-// HARD - DIG AND DUMP: load the truck 6 times before time runs out.
-// Hazards: a worker walking into the swing area (twice), an overhead power line above the truck, spills.
+// HARD - DIG AND DUMP: load the truck 4 times before time runs out (6 minutes).
+// The truck is OUT OF REACH of the pit, so every load is a cycle:
+//   1. dig at the pit, from the yellow DIG box
+//   2. drive (reversing) along a dog-leg lane to the yellow DUMP box beside the truck, ~14 m back and 6 m to
+//      the right. The lane has TWO TURNS, both forced by barriers:
+//        - straight back 4 m, then a row of concrete blocks behind the machine forces a turn to the RIGHT,
+//        - a diagonal of ~8 m, then a fence on the outside forces a turn back to the LEFT,
+//        - straight back 5 m into the DUMP box. The truck itself blocks the shortcut on the inside of the 2nd turn.
+//      Barrels mark the inside of the 1st turn and the outside of the diagonal.
+//   3. swing about 90 degrees left and dump into the truck
+//   4. drive back along the lane to the DIG box
+// Hazards: a worker walking into the swing area at the pit, a worker walking into the swing path
+// between machine and truck at the DUMP box, an overhead power line beyond the truck, spills.
 public class DigDumpScenario : Scenario
 {
-    const int Goal = 6;
+    const int Goal = 4;
+    const float Limit = 360F;          // seconds (other scenarios: StudyManager.trialDurationSeconds)
+    // Lane waypoints in "lane coordinates": (metres back from the DIG box, metres to the right).
+    static readonly Vector2 W1 = new Vector2(4F, 0F);      // end of the first straight -> turn right
+    static readonly Vector2 W2 = new Vector2(9F, 6F);      // end of the diagonal       -> turn left
+    static readonly Vector2 WP = new Vector2(14F, 6F);     // DUMP box
+    // Truck centre distance from the DUMP box centre, as a share of the machine's max reach
+    // (was 0.62: dumping now needs the arm further out and the bucket higher over the truck wall).
+    const float TruckOffset = 0.75F;
+
+    static readonly Vector3 digPos = new Vector3(-16.5F, 0, -7.5F);
+    Vector3 dumpPos;
+
     BucketLoad load;
-    Vector3 f, left, bedCenter;
-    int loads, spills;
-    WorkerWalker worker;
-    float[] workerTimes;
-    int workerEpisode;
+    Vector3 f, left, bedCenter, pit;
+    int loads, spills, trips;
+    bool atDump;
+    WorkerWalker pitWorker, truckWorker;
+    float pitWorkerAt, truckWorkerAt;
     float reach;
 
     public override string TaskText => $"Load the truck {Goal} times";
     public override Vector3? DumpTarget => bedCenter;
+    public override bool DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid) { c = bedCenter; fw = f; len = WorldBuilder.TruckBedLength; wid = WorldBuilder.TruckBedWidth; return true; }
+    public override float? TimeLimitSeconds => Limit;
     public override string ProgressText
     {
         get
         {
-            float remaining = Mathf.Max(0F, SM.trialDurationSeconds - SM.TrialTime);
-            return $"Loads: {loads} / {Goal}    Time left: {Mathf.FloorToInt(remaining / 60)}:{Mathf.FloorToInt(remaining % 60):00}    Watch for workers and the power line.";
+            float remaining = Mathf.Max(0F, SM.TrialLimit - SM.TrialTime);
+            string next = load != null && load.IsLoaded ? "Reverse to the yellow box at the truck and dump."
+                                                        : "Drive to the yellow box at the pit and dig.";
+            return $"Loads: {loads} / {Goal}    Time left: {Mathf.FloorToInt(remaining / 60)}:{Mathf.FloorToInt(remaining % 60):00}    {next}";
         }
+    }
+
+    // A point given in lane coordinates (back from the DIG box, to the right), on the ground.
+    Vector3 L(float back, float rightOff) => WorldBuilder.OnGround(digPos - f * back - left * rightOff);
+    Vector3 L(Vector2 v) => L(v.x, v.y);
+
+    public override string RouteTargetName => load != null && load.IsLoaded ? "DUMP BOX" : "DIG BOX";
+
+    // C3 driving cue: along the lane to the DUMP box (reversing) when loaded, back to the DIG box when empty.
+    public override System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse)
+    {
+        bool loaded = load != null && load.IsLoaded;
+        reverse = loaded;
+        Vector3 target = loaded ? dumpPos : digPos;
+        Vector3 c = M.SwingCenter;
+        if (new Vector2(c.x - target.x, c.z - target.z).magnitude < 1.2F) return null;
+        return loaded ? new System.Collections.Generic.List<Vector3> { L(W1), L(W2), L(WP) }
+                      : new System.Collections.Generic.List<Vector3> { L(W2), L(W1), L(Vector2.zero) };
     }
 
     protected override void Build()
     {
         f = Vector3.right;
         left = -Vector3.Cross(Vector3.up, f);
-        PlaceMachine(-16.5F, -7.5F, f);
+        PlaceMachine(digPos.x, digPos.z, f);
         M.EnableCuttingEdges(true);
         reach = M.MaxReach;
 
-        Vector3 pit = Rel(0.6F * reach, 0);
-        TerrainDigger.Instance.SetZone(pit, f, 3F, 3F, 2F);
-        Outline("pit", pit, f, 3F, 3F, BucketLoad.SoilMaterial().color);
+        dumpPos = L(WP);
+        Outline("digbox", WorldBuilder.OnGround(digPos), f, 5.5F, 4.5F, WorldBuilder.Yellow);
+        Outline("dumpbox", WorldBuilder.OnGround(dumpPos), f, 5.5F, 4.5F, WorldBuilder.Yellow);
 
-        // Truck to the left (90 degree swing), bed level with the swing centre.
-        Vector3 truckCenter = Rel(1F, -0.62F * reach);
+        pit = Rel(0.6F * reach, 0);
+        const float pitSize = 4.5F;   // was 3 m
+        TerrainDigger.Instance.SetZone(pit, f, pitSize, pitSize, 2F);
+        Outline("pit", pit, f, pitSize, pitSize, BucketLoad.SoilMaterial().color);
+
+        // --- Barriers that force the two turns ---
+        float yawLat = Quaternion.LookRotation(left).eulerAngles.y;   // long side across the lane
+        float yawLane = Quaternion.LookRotation(f).eulerAngles.y;     // long side along the lane
+        // Turn 1 (right): concrete blocks straight behind the end of the first straight.
+        for (int i = 0; i < 3; i++)
+        {
+            var block = WorldBuilder.Shape(PrimitiveType.Cube, Root, $"ConcreteBlock{i + 1}", L(8F, -3.0F + i * 1.05F),
+                                           new Vector3(0.6F, 0.8F, 1.0F), new Color(0.7F, 0.7F, 0.68F), yawLat, true);
+            WorldBuilder.AddHazard<ColliderHazard>(block, $"concrete_block_{i + 1}", HazardKind.Obstacle, 1.2F, 0.15F);
+        }
+        // Turn 2 (left): fence on the outside of the second turn, across the continuation of the diagonal.
+        {
+            Vector3 fa = L(8.5F, 9.6F), fb = L(12.5F, 9.6F);
+            var fence = WorldBuilder.Shape(PrimitiveType.Cube, Root, "LaneFence", (fa + fb) / 2F,
+                                           new Vector3(0.1F, 1.1F, (fb - fa).magnitude), WorldBuilder.Orange, yawLane, true);
+            WorldBuilder.AddHazard<ColliderHazard>(fence, "lane_fence", HazardKind.Obstacle, 1.2F, 0.15F);
+            for (float k = 0F; k <= 1.001F; k += 0.5F)
+                WorldBuilder.Shape(PrimitiveType.Cylinder, Root, "LaneFencePost", Vector3.Lerp(fa, fb, k), new Vector3(0.12F, 0.65F, 0.12F), WorldBuilder.White, 0, false);
+        }
+        // Barrels: inside of turn 1 (no early cutting to the right), outside of the diagonal, behind the DUMP box.
+        WorldBuilder.Barrel(Root, "LaneBarrel1", L(2.5F + Rand(-0.2F, 0.2F), 3.4F));
+        WorldBuilder.Barrel(Root, "LaneBarrel2", L(4.0F + Rand(-0.2F, 0.2F), 5.1F));
+        WorldBuilder.Barrel(Root, "LaneBarrel3", L(16.5F, 8.6F + Rand(-0.2F, 0.2F)));
+
+        // Truck to the left of the DUMP box (90 degree swing from there), out of reach from the DIG box.
+        Vector3 truckCenter = WorldBuilder.OnGround(dumpPos + left * (TruckOffset * reach) + f * 1F);
         bedCenter = WorldBuilder.Truck(Root, "Truck", truckCenter, f, out _);
 
         // Power line just beyond the truck, 7.5 m high.
-        Vector3 lineMid = Rel(0F, -(0.62F * reach + 2.5F));
-        WorldBuilder.PowerLine(Root, "PowerLine", lineMid - f * 14F, lineMid + f * 14F, 7.5F);
+        Vector3 lineMid = dumpPos + left * (TruckOffset * reach + 2.5F);
+        WorldBuilder.PowerLine(Root, "PowerLine", lineMid - f * 8F, lineMid + f * 8F, 7.5F);   // short: not over the DIG box
 
-        worker = WorldBuilder.Worker(Root, "Worker", Rel(reach + 4F, -(reach + 4F)));
-        worker.Hide();
-        workerTimes = new[] { Rand(35F, 70F), Rand(110F, 160F) };
+        pitWorker = WorldBuilder.Worker(Root, "WorkerPit", pit + left * 12F);
+        pitWorker.Hide();
+        truckWorker = WorldBuilder.Worker(Root, "WorkerTruck", dumpPos + f * 7F + left * 10F);
+        truckWorker.Hide();
+        pitWorkerAt = Rand(35F, 90F);
+        truckWorkerAt = Rand(150F, 230F);
+
+        StudyLogger.Log("layout", $"reach={reach:F2};truck_from_pit={CueKit.Flat(bedCenter - pit).magnitude:F1}");
 
         load = gameObject.AddComponent<BucketLoad>();
         load.Init(M);
         load.Dumped += p =>
         {
-            if (InRect(p, bedCenter, f, 5F, 2.5F, 0.3F)) { loads++; StudyLogger.Log("truck_load", $"{loads};amount={load.LastDumpAmount:F2}"); if (loads >= Goal) Complete("completed"); }
+            if (InRect(p, bedCenter, f, WorldBuilder.TruckBedLength, WorldBuilder.TruckBedWidth, 0.3F)) { loads++; StudyLogger.Log("truck_load", $"{loads};amount={load.LastDumpAmount:F2}"); if (loads >= Goal) Complete("completed"); }
             else { spills++; StudyLogger.Log("spill", $"missed_truck;amount={load.LastDumpAmount:F2}"); }
         };
     }
 
     protected override void Tick()
     {
-        if (workerEpisode < workerTimes.Length && SM.TrialTime >= workerTimes[workerEpisode])
+        float t = SM.TrialTime;
+        Vector3 c = M.SwingCenter;
+
+        // Trips to the truck.
+        bool nowAtDump = new Vector2(c.x - dumpPos.x, c.z - dumpPos.z).magnitude < 1.5F;
+        if (nowAtDump && !atDump) { trips++; StudyLogger.Log("stage", "at_dump_box_" + trips); }
+        atDump = nowAtDump;
+
+        // Worker 1: walks into the swing area at the pit (front-left of the DIG box), waits 5 s, walks out.
+        if (pitWorkerAt > 0F && t >= pitWorkerAt)
         {
-            // Worker walks into the swing path between the pit and the truck, waits, and walks out again.
+            pitWorkerAt = -1F;
             Vector3 diag = (f + left).normalized;
-            Vector3 start = workerEpisode == 0 ? WorldBuilder.OnGround(M.SwingCenter + diag * (reach + 4F)) : Rel(9F, -0.62F * reach);
-            Vector3 inPath = WorldBuilder.OnGround(M.SwingCenter + diag * (0.55F * reach));
-            worker.Appear(start);
-            worker.WalkTo(inPath, 5F);
-            worker.WalkTo(start);
-            StudyLogger.Log("event_start", "worker_in_swing_area_" + (workerEpisode + 1));
-            workerEpisode++;
+            Vector3 start = WorldBuilder.OnGround(digPos + diag * (reach + 4F));
+            Vector3 inPath = WorldBuilder.OnGround(digPos + diag * (0.55F * reach));
+            pitWorker.Appear(start);
+            pitWorker.WalkTo(inPath, 5F);
+            pitWorker.WalkTo(start);
+            StudyLogger.Log("event_start", "worker_in_swing_area_pit");
+        }
+
+        // Worker 2: walks along the truck into the swing path between DUMP box and truck, waits 5 s, walks on.
+        if (truckWorkerAt > 0F && t >= truckWorkerAt)
+        {
+            truckWorkerAt = -1F;
+            float off = Mathf.Max(2F, TruckOffset * reach - 2.2F);
+            Vector3 a = dumpPos + f * 7F + left * off, mid = dumpPos + left * off, b = dumpPos - f * 7F + left * off;
+            truckWorker.Appear(a);
+            truckWorker.WalkTo(mid, 5F);
+            truckWorker.WalkTo(b);
+            StudyLogger.Log("event_start", "worker_in_swing_area_truck");
         }
     }
 
-    public override string Summary() => $"loads={loads};spills={spills};scoops={load.Scoops}";
+    public override string Summary() => $"loads={loads};spills={spills};scoops={load.Scoops};trips={trips}";
 }

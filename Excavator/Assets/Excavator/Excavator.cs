@@ -483,6 +483,9 @@ public class Excavator
 
     // Bucket hinge point (where the bucket joins the arm) and the bucket itself.
     public Vector3 BucketPivotPosition => bucketAxis.position;
+    // Joints between boom and arm, and between arm and bucket (used to set the start posture).
+    public Vector3 BoomArmJointPosition => boomArmJoint.position;
+    public Vector3 ArmBucketJointPosition => armBucketJoint.position;
     public Transform BucketTransform => bucketAxis;
 
     // Rough maximum horizontal reach from the swing centre to the bucket teeth, in metres.
