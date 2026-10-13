@@ -451,18 +451,30 @@ public class DigDumpScenario : Scenario
     Vector3 L(float back, float rightOff) => WorldBuilder.OnGround(digPos - f * back - left * rightOff);
     Vector3 L(Vector2 v) => L(v.x, v.y);
 
-    public override string RouteTargetName => load != null && load.IsLoaded ? "DUMP BOX" : "DIG BOX";
+    // Where the C3 driving path leads. Normally: loaded -> DUMP box, empty -> DIG box. When the machine is
+    // already in that box (e.g. at the start, empty at the DIG box) the path switches to the OTHER box, so
+    // there is always a path while driving, whether or not there is soil in the bucket.
+    bool routeToDump, wasLoaded, inRouteTarget;
 
-    // C3 driving cue: along the lane to the DUMP box (reversing) when loaded, back to the DIG box when empty.
-    public override System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse)
+    void UpdateRouteTarget()
     {
         bool loaded = load != null && load.IsLoaded;
-        reverse = loaded;
-        Vector3 target = loaded ? dumpPos : digPos;
-        Vector3 c = M.SwingCenter;
-        if (new Vector2(c.x - target.x, c.z - target.z).magnitude < 1.2F) return null;
-        return loaded ? new System.Collections.Generic.List<Vector3> { L(W1), L(W2), L(WP) }
-                      : new System.Collections.Generic.List<Vector3> { L(W2), L(W1), L(Vector2.zero) };
+        if (loaded != wasLoaded) { wasLoaded = loaded; routeToDump = loaded; }   // new load -> truck; dumped -> pit
+        Vector3 target = routeToDump ? dumpPos : digPos, c = M.SwingCenter;
+        bool inside = new Vector2(c.x - target.x, c.z - target.z).magnitude < 1.2F;
+        if (inside && !inRouteTarget) routeToDump = !routeToDump;              // arrived: next leg goes the other way
+        inRouteTarget = new Vector2(c.x - (routeToDump ? dumpPos : digPos).x, c.z - (routeToDump ? dumpPos : digPos).z).magnitude < 1.2F;
+    }
+
+    public override string RouteTargetName => routeToDump ? "DUMP BOX" : "DIG BOX";
+
+    // C3 driving cue: along the lane to the DUMP box (reversing) or back to the DIG box (forward).
+    public override System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse)
+    {
+        UpdateRouteTarget();
+        reverse = routeToDump;
+        return routeToDump ? new System.Collections.Generic.List<Vector3> { L(W1), L(W2), L(WP) }
+                           : new System.Collections.Generic.List<Vector3> { L(W2), L(W1), L(Vector2.zero) };
     }
 
     protected override void Build()
