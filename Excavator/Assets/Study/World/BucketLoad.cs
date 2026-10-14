@@ -55,6 +55,7 @@ public class BucketLoad : MonoBehaviour
         lump.AddComponent<MeshRenderer>().sharedMaterial = SoilMaterial();
         lump.SetActive(false);
         AttachLumpToBucket(m);
+        BuildClods(m);
         prevTip = m.BucketTipPosition;
         prevAngle = m.bucketAngle;
     }
@@ -118,9 +119,11 @@ public class BucketLoad : MonoBehaviour
         if (show)
         {
             // The heap is a child of the bucket: base in the bucket's hollow, heaped out of the opening.
-            float r = Mathf.Lerp(0.2F, 0.45F, Fill);
-            lump.transform.localScale = new Vector3(r, Mathf.Lerp(0.05F, 0.3F, Fill), r) * lumpScale;
+            // It is only the low base layer; the visible load is the pile of clods on top of it.
+            float r = Mathf.Lerp(0.2F, 0.42F, Fill);
+            lump.transform.localScale = new Vector3(r, Mathf.Lerp(0.03F, 0.14F, Fill), r) * lumpScale;
         }
+        ShowClods(show ? Fill : 0F);
 
         // Dump: bucket opened wide while lifted out of the hole.
         float heightAboveOriginal = -depthBelowOriginal;
@@ -161,12 +164,106 @@ public class BucketLoad : MonoBehaviour
         lumpScale = 1F / Mathf.Max(0.01F, (Mathf.Abs(ls.x) + Mathf.Abs(ls.y) + Mathf.Abs(ls.z)) / 3F);
     }
 
+    // ---- Soil clods: a pile of irregular lumps of earth in the bucket (like real excavated soil) ----
+    // Built once per trial: ClodCount lumps at fixed spots in a dome over the bucket's hollow (lowest first),
+    // each a randomly dented sphere in one of three soil shades. As the bucket fills, more lumps appear,
+    // so the pile grows from the bottom up. They are children of the bucket, so they move with it.
+    const int ClodCount = 30;
+    readonly System.Collections.Generic.List<GameObject> clods = new System.Collections.Generic.List<GameObject>();
+    int shownClods = -1;
+
+    void BuildClods(Excavator m)
+    {
+        var holder = new GameObject("SoilClods").transform;
+        holder.SetParent(lump.transform.parent, false);
+        holder.localPosition = lump.transform.localPosition;
+        holder.localRotation = lump.transform.localRotation;
+        holder.localScale = Vector3.one * lumpScale;
+
+        var rnd = new System.Random(4242);
+        float R() => (float)rnd.NextDouble();
+        Mesh[] shapes = { ClodMesh(1), ClodMesh(2), ClodMesh(3), ClodMesh(4) };
+        Material[] mats = { ClodMaterial(0.40F, 0.30F, 0.20F), ClodMaterial(0.33F, 0.25F, 0.17F), ClodMaterial(0.46F, 0.37F, 0.27F) };
+
+        // Spots in a dome (local y = out of the bucket opening), sorted bottom-up.
+        var spots = new System.Collections.Generic.List<(Vector3 p, float size)>();
+        for (int i = 0; i < ClodCount; i++)
+        {
+            float a = R() * Mathf.PI * 2F, rad = Mathf.Sqrt(R()) * 0.36F;
+            float dome = 0.24F * (1F - (rad / 0.42F) * (rad / 0.42F));
+            Vector3 p = new Vector3(Mathf.Cos(a) * rad, dome * Mathf.Lerp(0.35F, 1F, R()), Mathf.Sin(a) * rad * 0.85F);
+            spots.Add((p, Mathf.Lerp(0.09F, 0.17F, R())));
+        }
+        spots.Sort((x, y) => x.p.y.CompareTo(y.p.y));
+
+        foreach (var (p, size) in spots)
+        {
+            var go = new GameObject("Clod");
+            go.transform.SetParent(holder, false);
+            go.transform.localPosition = p;
+            go.transform.localRotation = Quaternion.Euler(R() * 360F, R() * 360F, R() * 360F);
+            go.transform.localScale = new Vector3(size, size * Mathf.Lerp(0.75F, 1F, R()), size * Mathf.Lerp(0.85F, 1.1F, R()));
+            go.AddComponent<MeshFilter>().sharedMesh = shapes[rnd.Next(shapes.Length)];
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = mats[rnd.Next(mats.Length)];
+            go.SetActive(false);
+            clods.Add(go);
+        }
+    }
+
+    void ShowClods(float fill)
+    {
+        int n = Mathf.Clamp(Mathf.RoundToInt(fill * ClodCount), 0, ClodCount);
+        if (n == shownClods) return;
+        shownClods = n;
+        for (int i = 0; i < clods.Count; i++) if (clods[i] != null && clods[i].activeSelf != (i < n)) clods[i].SetActive(i < n);
+    }
+
+    static readonly System.Collections.Generic.Dictionary<int, Mesh> clodMeshes = new System.Collections.Generic.Dictionary<int, Mesh>();
+
+    // A lumpy rock-like ball: Unity's sphere with every vertex pushed in or out by smooth noise (based on the
+    // vertex direction, so the seams of the sphere stay closed).
+    static Mesh ClodMesh(int seed)
+    {
+        if (clodMeshes.TryGetValue(seed, out var cached) && cached != null) return cached;
+        var tmp = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        Mesh src = tmp.GetComponent<MeshFilter>().sharedMesh;
+        UnityEngine.Object.Destroy(tmp);
+        var v = src.vertices;
+        float ox = seed * 3.7F, oy = seed * 5.3F;
+        for (int i = 0; i < v.Length; i++)
+        {
+            Vector3 d = v[i].normalized;
+            float n = Mathf.PerlinNoise(d.x * 1.6F + ox, d.y * 1.6F + d.z * 0.9F + oy) - 0.5F;
+            float n2 = Mathf.PerlinNoise(d.z * 4F + oy, d.x * 4F + d.y * 2F + ox) - 0.5F;
+            v[i] = d * 0.5F * (1F + n * 0.55F + n2 * 0.18F);
+        }
+        var mesh = new Mesh { name = "Clod" + seed };
+        mesh.vertices = v;
+        mesh.triangles = src.triangles;
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        clodMeshes[seed] = mesh;
+        return mesh;
+    }
+
+    static readonly System.Collections.Generic.Dictionary<Color, Material> clodMats = new System.Collections.Generic.Dictionary<Color, Material>();
+    static Material ClodMaterial(float r, float g, float b)
+    {
+        var c = new Color(r, g, b);
+        if (clodMats.TryGetValue(c, out var m) && m != null) return m;
+        m = WorldBuilder.MakeMaterial(c);
+        clodMats[c] = m;
+        return m;
+    }
+
     void Dump(Vector3 at)
     {
         LastDumpAmount = Fill;
         IsLoaded = false;
         Fill = 0F;
         lump.SetActive(false);
+        ShowClods(0F);
 
         // Find what is below the bucket (truck bed or ground), ignoring the excavator itself.
         Vector3 landing = WorldBuilder.OnGround(at);

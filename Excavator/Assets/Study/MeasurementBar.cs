@@ -16,7 +16,8 @@ public class MeasurementBar : MonoBehaviour
     public float refreshRateHz = 10F;      // numbers update 10 times per second (easier to read)
 
     GameObject canvasGo;
-    Text mode, swing, boom, arm, bucket, height, tilt, speed;
+    Text mode, swing, boom, arm, bucket, height, tilt, speed, loadText;
+    BucketLoad load;   // the scenario's bucket load (found when needed; changes every trial)
     float nextRefresh;
     static readonly CultureInfo inv = CultureInfo.InvariantCulture;
 
@@ -61,6 +62,7 @@ public class MeasurementBar : MonoBehaviour
         arm    = Cell(bar.transform, font, "ARM");
         bucket = Cell(bar.transform, font, "BUCKET");
         height = Cell(bar.transform, font, "BUCKET HEIGHT");
+        loadText = Cell(bar.transform, font, "BUCKET LOAD");
         tilt   = Cell(bar.transform, font, "TILT");
         speed  = Cell(bar.transform, font, "SPEED");
 
@@ -117,6 +119,10 @@ public class MeasurementBar : MonoBehaviour
         height.text = m.BucketHeightAboveGround.ToString("+0.00;-0.00", inv) + " m";
         tilt.text   = Deg(m.TiltAngle);
         speed.text  = m.SpeedKmh.ToString("0.0", inv) + " km/h";
+
+        // How full the bucket is, 0-100 % (same scale the scenarios use to count a scoop / a load).
+        if (load == null) load = FindAnyObjectByType<BucketLoad>();
+        loadText.text = load == null ? "-" : Mathf.RoundToInt(load.Fill * 100F).ToString(inv) + " %";
     }
 
     static string Deg(float v) => v.ToString("0", inv) + "°";
