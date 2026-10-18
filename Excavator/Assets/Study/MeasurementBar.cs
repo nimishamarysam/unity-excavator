@@ -123,6 +123,7 @@ public class MeasurementBar : MonoBehaviour
         // How full the bucket is, 0-100 % (same scale the scenarios use to count a scoop / a load).
         if (load == null) load = FindAnyObjectByType<BucketLoad>();
         loadText.text = load == null ? "-" : Mathf.RoundToInt(load.Fill * 100F).ToString(inv) + " %";
+
     }
 
     static string Deg(float v) => v.ToString("0", inv) + "°";

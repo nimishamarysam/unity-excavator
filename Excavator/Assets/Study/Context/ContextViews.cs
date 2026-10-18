@@ -93,6 +93,7 @@ public class ContextViews : MonoBehaviour
         w.cam.rect = r;
         w.cam.depth = depth;              // drawn on top of the operator's view
         w.cam.nearClipPlane = 0.2F;
+        w.cam.cullingMask &= ~(1 << CueKit.DriverOnlyLayer);   // driver-view-only cues (teeth line)
 
         Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         w.frame = new GameObject("ContextFrame_" + name);
@@ -221,16 +222,15 @@ public class ContextViews : MonoBehaviour
         w.cam.transform.rotation = Quaternion.LookRotation(lookAt - w.cam.transform.position, up);
     }
 
-    // The view into the bucket is only shown when the bucket is open (not curled): the bucket angle
-    // (as on the measurement bar) must be above intoBucketMinAngle. 2 degree hysteresis + 0.4 s hold against flicker.
+    // The view into the bucket is shown when the BUCKET angle (as on the measurement bar) is above
+    // intoBucketMinAngle (2 degree hysteresis, 0.4 s hold against flicker).
     public float intoBucketMinAngle = 5F;
     bool intoBucketOn;
     float intoBucketChanged = -10F;
 
     bool IntoBucketWanted()
     {
-        var m = ctl.Machine;
-        float a = m.bucketAngle;
+        float a = ctl.Machine.bucketAngle;
         bool want = intoBucketOn ? a > intoBucketMinAngle - 2F : a > intoBucketMinAngle;
         if (want != intoBucketOn && Time.unscaledTime - intoBucketChanged > 0.4F)
         {
@@ -261,6 +261,8 @@ public class ContextViews : MonoBehaviour
         Vector3 reachDir = mid - m.SwingCenter; reachDir.y = 0F;
         reachDir = reachDir.sqrMagnitude > 0.01F ? reachDir.normalized : m.ForwardFlat;
         Vector3 side = Vector3.Cross(Vector3.up, reachDir);         // right of the arm, seen from the cab
+        // Fixed vantage relative to the arm plane: above the bucket, a little towards the cab and to the right
+        // of the arm (always above the bucket, so never inside the truck bed or the ground).
         lookAt = mid;
         pos = mid + Vector3.up * (0.8F * intoBucketDistance) - reachDir * (0.35F * intoBucketDistance) + side * intoBucketSideShift;
         float ground = TerrainDigger.CurrentGroundHeight(pos) + 0.4F;
@@ -287,6 +289,13 @@ public class ContextViews : MonoBehaviour
                 // Side-on view of the BUCKET (not the ground): camera level with the bucket, a little above it,
                 // looking at the bucket and slightly down so the surface below it (ground or truck bed) is in view.
                 Vector3 bmid = (m.BucketPivotPosition + tip) / 2F;
+                if (UndergroundSideView.Active)
+                {
+                    // C3 cut-away: terrain hidden for this camera, so it can sit level with the bucket below ground.
+                    pos = bmid - side * (bucketSideDistance * z) + Vector3.up * 0.3F - reachDir * 0.5F;
+                    lookAt = bmid;
+                    break;
+                }
                 float below = Mathf.Clamp(bmid.y - TerrainDigger.CurrentGroundHeight(bmid), 0F, 3F);
                 pos = bmid - side * (bucketSideDistance * z) + Vector3.up * 0.6F - reachDir * 0.5F;
                 float minY = TerrainDigger.CurrentGroundHeight(pos) + 0.5F;

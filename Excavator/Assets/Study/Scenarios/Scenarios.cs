@@ -56,8 +56,10 @@ public class DrivingScenario : Scenario
     float crosserAt = -1F, behindAt = -1F;
     int contacts;
 
-    public override string TaskText => reversing ? "Reverse (drive backwards) to the yellow stop line" : "Drive through the gates in order";
-    public override string ProgressText => reversing ? "Stop with the machine centre on the line." : $"Next gate: {nextGate + 1} of {gates.Length}";
+    public override string TaskText => reversing ? "Reverse to the yellow stop line" : "Drive forward through the gates in order";
+    public override string ProgressText => reversing
+        ? "Pull both travel levers back to reverse. The cab keeps facing forward - do not swing it around.\nStop when the middle of the machine is on the yellow line."
+        : $"Next: gate {nextGate + 1} of {gates.Length}. Push both travel levers forward; steer around obstacles and people.";
 
     protected override void Build()
     {
@@ -420,6 +422,10 @@ public class DigDumpScenario : Scenario
     // Truck centre distance from the DUMP box centre, as a share of the machine's max reach
     // (was 0.62: dumping now needs the arm further out and the bucket higher over the truck wall).
     const float TruckOffset = 0.75F;
+    const float PowerLineHeight = 5.8F;        // pole height; wire hangs 0.3 m lower (was 7.5 m)
+    const float PowerLineBeyondTruck = 1.6F;   // wire this far beyond the truck centre line = above the far bed wall (was 2.5 m)
+    public const bool PitPipeEnabled = true;
+    const float PipeDepth = 1.2F;              // pipe below the original ground in the pit
 
     static readonly Vector3 digPos = new Vector3(-16.5F, 0, -7.5F);
     Vector3 dumpPos;
@@ -434,6 +440,8 @@ public class DigDumpScenario : Scenario
 
     public override string TaskText => $"Load the truck {Goal} times";
     public override Vector3? DumpTarget => bedCenter;
+    // C3 digging cues (trajectory, depth arrow, section view): keep the scoops shallow, above the pipe.
+    public override float? DigTargetDepth => PitPipeEnabled ? PipeDepth - 0.3F : (float?)null;
     public override bool DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid) { c = bedCenter; fw = f; len = WorldBuilder.TruckBedLength; wid = WorldBuilder.TruckBedWidth; return true; }
     public override float? TimeLimitSeconds => Limit;
     public override string ProgressText
@@ -441,9 +449,15 @@ public class DigDumpScenario : Scenario
         get
         {
             float remaining = Mathf.Max(0F, SM.TrialLimit - SM.TrialTime);
-            string next = load != null && load.IsLoaded ? "Reverse to the yellow box at the truck and dump."
-                                                        : "Drive to the yellow box at the pit and dig.";
-            return $"Loads: {loads} / {Goal}    Time left: {Mathf.FloorToInt(remaining / 60)}:{Mathf.FloorToInt(remaining % 60):00}    {next}";
+            bool loaded = load != null && load.IsLoaded;
+            Vector3 c = M.SwingCenter;
+            bool atDig = new Vector2(c.x - digPos.x, c.z - digPos.z).magnitude < 1.5F;
+            string next;
+            if (loaded && atDump)  next = "Swing the cab LEFT to the truck and empty the bucket into the truck bed.";
+            else if (loaded)       next = "REVERSE to the DUMP box: pull both travel levers back. The cab keeps facing the pit - do not swing it. The lane bends right, then left.";
+            else if (atDig)        next = "Fill the bucket from the brown pit in front of you.";
+            else                   next = "Drive FORWARD along the lane back to the DIG box.";
+            return $"Loads: {loads} / {Goal}      Time left: {Mathf.FloorToInt(remaining / 60)}:{Mathf.FloorToInt(remaining % 60):00}\nNext: {next}";
         }
     }
 
@@ -484,6 +498,7 @@ public class DigDumpScenario : Scenario
         PlaceMachine(digPos.x, digPos.z, f);
         M.EnableCuttingEdges(true);
         reach = M.MaxReach;
+        LastReach = reach;
 
         dumpPos = L(WP);
         Outline("digbox", WorldBuilder.OnGround(digPos), f, 5.5F, 4.5F, WorldBuilder.Yellow);
@@ -522,9 +537,45 @@ public class DigDumpScenario : Scenario
         Vector3 truckCenter = WorldBuilder.OnGround(dumpPos + left * (TruckOffset * reach) + f * 1F);
         bedCenter = WorldBuilder.Truck(Root, "Truck", truckCenter, f, out _);
 
-        // Power line just beyond the truck, 7.5 m high.
-        Vector3 lineMid = dumpPos + left * (TruckOffset * reach + 2.5F);
-        WorldBuilder.PowerLine(Root, "PowerLine", lineMid - f * 8F, lineMid + f * 8F, 7.5F);   // short: not over the DIG box
+        // Power line LOW (wire at 5.5 m) along the far side of the truck bed: lifting the bucket too high or
+        // reaching too far over the truck can touch it. Shorter warning distance (2 m) so a normal dump does not warn.
+        Vector3 lineMid = dumpPos + left * (TruckOffset * reach + PowerLineBeyondTruck);
+        var powerLine = WorldBuilder.PowerLine(Root, "PowerLine", lineMid - f * 8F, lineMid + f * 8F, PowerLineHeight);   // short: not over the DIG box
+        // Measured from the real boom/arm/bucket (not the collider hulls): contact = within 0.3 m of the wire.
+        powerLine.measure = HazardMeasure.Attachment;
+        powerLine.warnDistance = 1.5F;
+        powerLine.contactDistance = 0.3F;
+
+        // Water pipe crossing under the pit (across the arm's direction), marked with yellow posts outside the pit.
+        if (PitPipeEnabled)
+        {
+            Vector3 cross = pit + f * Rand(-0.8F, 0.8F);
+            Vector3 pa = cross - left * (pitSize / 2F + 1.5F), pb = cross + left * (pitSize / 2F + 1.5F);
+            var pipe = new GameObject("PitPipe").AddComponent<SegmentHazard>();
+            pipe.transform.SetParent(Root);
+            pipe.a = new Vector3(pa.x, TerrainDigger.ReferenceGroundHeight(pa) - PipeDepth, pa.z);
+            pipe.b = new Vector3(pb.x, TerrainDigger.ReferenceGroundHeight(pb) - PipeDepth, pb.z);
+            pipe.hazardId = "pit_pipe"; pipe.kind = HazardKind.BuriedPipe;
+            // distances to the pipe AXIS: pipe radius 0.15 m, so contact = teeth touch the pipe, warning = 0.25 m from it
+            pipe.measure = HazardMeasure.BucketTeethOnly; pipe.warnDistance = 0.4F; pipe.contactDistance = 0.17F;
+            // The pipe itself (no collider): hidden by the ground until it is dug free, visible in the cut-away side view.
+            var pipeBody = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            pipeBody.name = "PitPipeBody";
+            pipeBody.transform.SetParent(Root, true);
+            Object.Destroy(pipeBody.GetComponent<Collider>());
+            pipeBody.transform.position = (pipe.a + pipe.b) / 2F;
+            pipeBody.transform.up = (pipe.b - pipe.a).normalized;
+            pipeBody.transform.localScale = new Vector3(0.3F, (pipe.b - pipe.a).magnitude / 2F, 0.3F);
+            pipeBody.GetComponent<Renderer>().sharedMaterial = WorldBuilder.MakeMaterial(new Color(0.2F, 0.42F, 0.75F));
+            foreach (float sgn in new[] { -1F, 1F })
+            {
+                Vector3 post = cross + left * sgn * (pitSize / 2F + 0.6F);
+                WorldBuilder.Shape(PrimitiveType.Cylinder, Root, "PipeMarker", post, new Vector3(0.12F, 0.55F, 0.12F), WorldBuilder.Yellow, 0, false);
+                WorldBuilder.GroundMark(Root, "PipeLine", WorldBuilder.OnGround(cross + left * sgn * (pitSize / 2F + 0.45F)), 0.9F, 0.12F, 0F, WorldBuilder.Yellow);
+            }
+            StudyLogger.Log("layout", $"pit_pipe_depth={PipeDepth:F2};offset={Vector3.Dot(cross - pit, f):F2}");
+        }
+        BuildLineMap();
 
         pitWorker = WorldBuilder.Worker(Root, "WorkerPit", pit + left * 12F);
         pitWorker.Hide();
@@ -544,8 +595,65 @@ public class DigDumpScenario : Scenario
         };
     }
 
+    // ---- maps ----
+    // Simple line map for the task panel: the lane, a "you are here" dot and the current destination.
+    void BuildLineMap()
+    {
+        Color lane = new Color(0.75F, 0.78F, 0.8F);
+        var m = new MiniMap { Up = f, LineWidth = 6F, FontSize = 12, Background = new Color(0.1F, 0.1F, 0.1F, 0.6F) };
+        m.Line(L(Vector2.zero), L(W1), lane);
+        m.Line(L(W1), L(W2), lane);
+        m.Line(L(W2), L(WP), lane);
+        m.Label(digPos + f * 2.6F, "DIG", WorldBuilder.Yellow);
+        m.Label(dumpPos - f * 2.6F, "DUMP", WorldBuilder.Yellow);
+        m.Here = () => M.SwingCenter;
+        m.Target = () => routeToDump ? dumpPos : digPos;
+        Map = m;
+    }
+
+    // Machine reach used by the briefing map before the scenario is built (updated from the real machine).
+    public static float LastReach = 10.14F;
+    static Vector3 LS(float back, float rightOff) => digPos - Vector3.right * back - new Vector3(0, 0, 1) * rightOff;   // f = +x, left = +z
+
+    // Detailed site map for the task instruction screen (drawn before the trial, so it uses static geometry).
+    public static MiniMap SiteMap()
+    {
+        Vector3 F = Vector3.right, Lf = new Vector3(0, 0, 1);
+        float reach = LastReach;
+        Vector3 dig = digPos, dump = LS(WP.x, WP.y), pit = dig + F * (0.6F * reach);
+        Vector3 truck = dump + Lf * (TruckOffset * reach) + F * 1F, line = dump + Lf * (TruckOffset * reach + PowerLineBeyondTruck);
+        Color yellow = WorldBuilder.Yellow, cyan = new Color(0.1F, 0.85F, 1F), brown = new Color(0.55F, 0.38F, 0.22F), grey = new Color(0.75F, 0.75F, 0.72F);
+
+        var m = new MiniMap { Up = F, LineWidth = 4F, FontSize = 15 };
+        m.Rect(pit, 4.5F, 4.5F, brown);
+        m.Label(pit + F * 1.4F, "PIT", Color.white);
+        m.Rect(dig, 5.5F, 4.5F, yellow, false);
+        m.Label(dig, "DIG\n(start)", yellow);
+        m.Rect(dump, 5.5F, 4.5F, yellow, false);
+        m.Label(dump, "DUMP", yellow);
+        m.Rect(truck, 8.5F, WorldBuilder.TruckBedWidth, new Color(0.95F, 0.8F, 0.15F));
+        m.Label(truck, "TRUCK", Color.black);
+        m.Line(line - F * 8F, line + F * 8F, new Color(0.05F, 0.05F, 0.05F));
+        m.Label(line + F * 9.6F, "LOW power line", new Color(0.85F, 0.85F, 0.85F));
+        m.Line(pit - Lf * 3.4F, pit + Lf * 3.4F, new Color(0.3F, 0.6F, 1F));
+        m.Label(pit + Lf * 4.6F, "pipe", new Color(0.4F, 0.7F, 1F));
+        m.Line(LS(0, 0), LS(W1.x, W1.y), cyan);
+        m.Line(LS(W1.x, W1.y), LS(W2.x, W2.y), cyan);
+        m.Line(LS(W2.x, W2.y), LS(WP.x, WP.y), cyan);
+        m.Label((LS(W1.x, W1.y) + LS(W2.x, W2.y)) / 2F + Lf * -2.6F, "lane", cyan);
+        for (int i = 0; i < 3; i++) m.Rect(LS(8F, -3.0F + i * 1.05F), 0.6F, 1.0F, grey);
+        m.Label(LS(9.6F, -2F), "blocks", grey);
+        m.Line(LS(8.5F, 9.6F), LS(12.5F, 9.6F), WorldBuilder.Orange);
+        m.Label(LS(10.5F, 11.3F), "fence", WorldBuilder.Orange);
+        foreach (var br in new[] { LS(2.5F, 3.4F), LS(4F, 5.1F), LS(16.5F, 8.6F) }) m.Dot(br, 0.4F, new Color(0.3F, 0.55F, 1F));
+        m.Label(LS(4F, 6.8F), "barrels", new Color(0.4F, 0.65F, 1F));
+        m.Label(dig + F * 7.5F + Lf * 6F, "\u2191 cab faces this way", Color.white);
+        return m;
+    }
+
     protected override void Tick()
     {
+        UpdateRouteTarget();
         float t = SM.TrialTime;
         Vector3 c = M.SwingCenter;
 

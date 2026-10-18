@@ -41,8 +41,8 @@ public static class StudyDesign
     // The three scenarios. Their order is shuffled per condition block (see BuildTrials).
     static readonly StudyScenario[] scenarioOrder =
     {
-        //StudyScenario.Easy_Driving, StudyScenario.Moderate_Digging, StudyScenario.Hard_DigAndDump
-        StudyScenario.Hard_DigAndDump
+        StudyScenario.Easy_Driving, StudyScenario.Moderate_Digging, StudyScenario.Hard_DigAndDump
+        //StudyScenario.Hard_DigAndDump
     };
 
     // Participant 1 gets row 0, participant 2 row 1, participant 3 row 2, participant 4 row 0 ...
@@ -123,13 +123,26 @@ public static class StudyDesign
             case StudyScenario.Practice:
                 return "Try out the controls. Nothing is measured. Press B to switch between driving and digging mode.";
             case StudyScenario.Easy_Driving:
-                return "Drive along the marked route to the work site. Avoid obstacles and people.";
+                return "Goal: drive through the 4 gates in order, then reverse to the yellow stop line.\n\n" +
+                       "1. Drive forward: push both travel levers forward and pass through gates 1, 2, 3 and 4 in order.\n" +
+                       "2. Reverse: after gate 4, pull both travel levers back. The machine moves backwards while the cab " +
+                       "keeps facing forward - do NOT swing the cab around.\n" +
+                       "3. Stop when the middle of the machine is on the yellow stop line.\n\n" +
+                       "Do not touch the gates, obstacles or people.";
             case StudyScenario.Moderate_Digging:
                 return "Drive into the yellow box, then dig the marked trench to the target depth. Dump soil only on the small white square. " +
                        "Avoid the buried cable, the crossing pipe below the trench, and the worker.";
             default:
-                return "Load the truck 4 times before time runs out. The truck is out of reach: dig from the yellow box at the pit, " +
-                       "drive back along the lane (turn right, then left, around the barriers) to the yellow box at the truck, dump, and drive back. Watch for workers and the power line.";
+                return "Goal: load the truck 4 times within 6 minutes. The truck is out of reach from the pit, so you drive between them.\n\n" +
+                       "For each load:\n" +
+                       "1. Dig: from the DIG box, fill the bucket from the brown pit in front of you.\n" +
+                       "2. Reverse to the DUMP box: pull both travel levers back. The machine moves backwards while the cab keeps " +
+                       "facing the pit - do NOT swing the cab around. Follow the lane: it bends right, then left, around the barriers.\n" +
+                       "3. Dump: in the DUMP box, swing the cab LEFT to the truck and empty the bucket into the truck bed.\n" +
+                       "4. Drive forward: push both travel levers forward to return along the lane to the DIG box.\n\n" +
+                       "Do not hit the barriers, the truck or the workers. A water pipe crosses under the pit between the yellow posts - do not dig into it. " +
+                       "A LOW power line runs along the far side of the truck - do not lift the bucket too high or reach too far over the truck. " +
+                       "While working, a small map in the task panel shows where you are and where to go next.";
         }
     }
 }

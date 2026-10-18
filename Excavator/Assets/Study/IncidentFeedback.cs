@@ -1,101 +1,78 @@
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 
 // ---------------------------------------------------------------------------
 // INCIDENT FEEDBACK  (all scenarios, ALL conditions - it is the consequence of an error, not a cue)
-// When something happens that should not happen, the participant gets immediate feedback:
-//   - a red flash around the driver view,
-//   - a red message in the middle of the driver view (e.g. "PIPE CUT", "WORKER HIT"), 2.5 s.
-// (No sound.)
+// When something happens that should not happen, the participant hears a short warning sound and the
+// INCIDENTS counter in the status bar goes up (and turns red for a moment). No text, no flash.
+//
 // Triggered by the study's own log events (contacts, strikes, spills, over-digging, ...), so what the
-// participant sees is exactly what is recorded. Each message is also logged as "incident_shown".
-// The same incident is not repeated within 2 s (e.g. a bucket resting against the truck wall).
+// participant hears is exactly what is recorded. Each incident is logged as "incident" with its type.
+// The same incident type is not counted again within 2 s (e.g. a bucket resting against the truck wall).
+// The counter starts at 0 in every trial.
 // ---------------------------------------------------------------------------
 
 public class IncidentFeedback : MonoBehaviour
 {
-    public float showSeconds = 2.5F;
     public float repeatBlockSeconds = 2F;
+    [Range(0, 1)] public float volume = 0.6F;
 
-    GameObject canvasGo;
-    readonly Image[] border = new Image[4];
-    Image banner;
-    Text bannerText;
-    float shownAt = -100F;
-    string current = "";
-    int repeats;
-    readonly Dictionary<string, float> lastShown = new Dictionary<string, float>();
+    // Read by the task panel (ScenarioRunner).
+    public static int Count { get; private set; }
+    public static string LastDescription { get; private set; } = "";
+    public static float LastIncidentTime { get; private set; } = -100F;   // unscaled time
 
-    void OnEnable() { StudyLogger.Logged += OnLogged; }
-    void OnDisable() { StudyLogger.Logged -= OnLogged; }
+    readonly System.Collections.Generic.Dictionary<string, float> lastByType = new System.Collections.Generic.Dictionary<string, float>();
+    AudioSource audioSource;
+
+    void OnEnable()
+    {
+        StudyLogger.Logged += OnLogged;
+        StudyManager.TrialStarted += OnTrialStarted;
+    }
+
+    void OnDisable()
+    {
+        StudyLogger.Logged -= OnLogged;
+        StudyManager.TrialStarted -= OnTrialStarted;
+    }
 
     void Start()
     {
-        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        canvasGo = new GameObject("IncidentCanvas");
-        canvasGo.transform.SetParent(transform, false);
-        var canvas = canvasGo.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = 70;   // above everything else
-
-        Rect v = StudyLayout.DriverView;
-        float t = 0.012F;
-        border[0] = Box(new Vector2(v.xMin, v.yMax - t), new Vector2(v.xMax, v.yMax));   // top
-        border[1] = Box(new Vector2(v.xMin, v.yMin), new Vector2(v.xMax, v.yMin + t));   // bottom
-        border[2] = Box(new Vector2(v.xMin, v.yMin), new Vector2(v.xMin + t * 0.6F, v.yMax));   // left
-        border[3] = Box(new Vector2(v.xMax - t * 0.6F, v.yMin), new Vector2(v.xMax, v.yMax));   // right
-
-        banner = Box(new Vector2(v.center.x - 0.2F, v.yMin + v.height * 0.55F), new Vector2(v.center.x + 0.2F, v.yMin + v.height * 0.55F + 0.075F));
-        var tGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
-        tGo.transform.SetParent(banner.transform, false);
-        var rt = tGo.GetComponent<RectTransform>();
-        rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = rt.offsetMax = Vector2.zero;
-        bannerText = tGo.GetComponent<Text>();
-        bannerText.font = font; bannerText.fontSize = 34; bannerText.fontStyle = FontStyle.Bold;
-        bannerText.alignment = TextAnchor.MiddleCenter; bannerText.color = Color.white;
-        bannerText.horizontalOverflow = HorizontalWrapMode.Overflow;
-
-        canvasGo.SetActive(false);
+        audioSource = gameObject.AddComponent<AudioSource>();
+        audioSource.playOnAwake = false;
+        audioSource.spatialBlend = 0F;
+        audioSource.clip = AlertClip();
     }
 
-    Image Box(Vector2 min, Vector2 max)
+    void OnTrialStarted(TrialInfo t)
     {
-        var go = new GameObject("Box", typeof(RectTransform), typeof(Image));
-        go.transform.SetParent(canvasGo.transform, false);
-        var rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = min; rt.anchorMax = max; rt.offsetMin = rt.offsetMax = Vector2.zero;
-        return go.GetComponent<Image>();
+        Count = 0;
+        LastDescription = "";
+        LastIncidentTime = -100F;
+        lastByType.Clear();
     }
 
-    // Which log events are incidents, and the message to show.
-    static string Message(string evt, string detail)
+    // Which log events are incidents (short type name for the log), null = not an incident.
+    static string IncidentType(string evt, string detail)
     {
         switch (evt)
         {
             case "hazard_contact":
             {
                 string[] p = detail.Split(';');
-                string kind = p.Length > 1 ? p[1] : "";
-                switch (kind)
-                {
-                    case "Worker": return "WORKER HIT!";
-                    case "Obstacle": return "OBSTACLE HIT";
-                    case "BuriedCable": return "CABLE STRUCK";
-                    case "BuriedPipe": return "PIPE CUT";
-                    case "PowerLine": return "POWER LINE CONTACT!";
-                    case "Truck": return "TRUCK HIT";
-                    case "TrenchEdge": return "TOO CLOSE TO THE TRENCH EDGE";
-                    case "Boulder": return "BOULDER HIT";
-                    case "Wall": return "WALL HIT";
-                    default: return "CONTACT";
-                }
+                return "contact_" + (p.Length > 1 ? p[1] : "unknown");   // e.g. contact_Worker, contact_BuriedPipe
             }
-            case "bucket_blocked": return "BUCKET HIT THE TRUCK";
-            case "spill": return detail.StartsWith("too_close") ? "SOIL DUMPED TOO CLOSE TO THE TRENCH" : "SOIL SPILLED";
-            case "over_dig": return "DUG TOO DEEP";
-            case "cut_outside_zone": return "DIGGING OUTSIDE THE MARKED AREA";
-            case "bucket_over_worker": return "BUCKET OVER A WORKER";
+            case "bucket_blocked":
+            {   // only real impacts (BucketBlocker: fast enough), not slow touches; type names the part hit
+                if (!detail.Contains("impact=1")) return null;
+                int i = detail.IndexOf("part=");
+                string part = i >= 0 ? detail.Substring(i + 5).Split(';')[0] : "truck";
+                return "truck_hit_" + part;
+            }
+            case "spill": return detail.StartsWith("too_close") ? "spill_too_close" : "spill";
+            case "over_dig": return "over_dig";
+            case "cut_outside_zone": return "dig_outside_area";
+            case "bucket_over_worker": return "bucket_over_worker";
             default: return null;
         }
     }
@@ -103,39 +80,68 @@ public class IncidentFeedback : MonoBehaviour
     void OnLogged(string evt, string detail)
     {
         var sm = StudyManager.Instance;
-        if (sm == null || !sm.IsTrialRunning || canvasGo == null) return;
-        string msg = Message(evt, detail);
-        if (msg == null) return;
+        if (sm == null || !sm.IsTrialRunning) return;
+        string type = IncidentType(evt, detail);
+        if (type == null) return;
 
         float now = Time.unscaledTime;
-        if (lastShown.TryGetValue(msg, out float last) && now - last < repeatBlockSeconds) return;
-        lastShown[msg] = now;
+        if (lastByType.TryGetValue(type, out float last) && now - last < repeatBlockSeconds) return;
+        lastByType[type] = now;
 
-        repeats = msg == current && now - shownAt < showSeconds ? repeats + 1 : 1;
-        current = msg;
-        shownAt = now;
-        bannerText.text = repeats > 1 ? $"{msg}  (x{repeats})" : msg;
-        float w = Mathf.Max(0.22F, bannerText.text.Length * 0.0115F);
-        var brt = banner.rectTransform;
-        Rect v = StudyLayout.DriverView;
-        brt.anchorMin = new Vector2(v.center.x - w / 2F, brt.anchorMin.y);
-        brt.anchorMax = new Vector2(v.center.x + w / 2F, brt.anchorMax.y);
-        canvasGo.SetActive(true);
-        StudyLogger.Log("incident_shown", msg);
+        Count++;
+        LastIncidentTime = now;
+        LastDescription = Describe(type);
+        if (audioSource != null) audioSource.PlayOneShot(audioSource.clip, volume);
+        StudyLogger.Log("incident", $"{type};count={Count}");
     }
 
-    void Update()
+    // Short readable text for the task panel.
+    static string Describe(string type)
     {
-        if (canvasGo == null || !canvasGo.activeSelf) return;
-        var sm = StudyManager.Instance;
-        float age = Time.unscaledTime - shownAt;
-        if (age > showSeconds || sm == null || !sm.IsTrialRunning) { canvasGo.SetActive(false); return; }
-        // Border blinks for the first second, then fades with the message.
-        float fade = Mathf.Clamp01((showSeconds - age) / 0.6F);
-        float blink = age < 1F ? (Mathf.Repeat(age * 6F, 1F) < 0.5F ? 1F : 0.35F) : 1F;
-        Color red = new Color(0.9F, 0.08F, 0.06F);
-        foreach (var b in border) b.color = new Color(red.r, red.g, red.b, 0.9F * fade * blink);
-        banner.color = new Color(red.r, red.g, red.b, 0.88F * fade);
-        bannerText.color = new Color(1F, 1F, 1F, fade);
+        switch (type)
+        {
+            case "contact_Worker": return "Worker hit";
+            case "contact_Obstacle": return "Obstacle hit";
+            case "contact_BuriedCable": return "Buried cable struck";
+            case "contact_BuriedPipe": return "Pipe struck";
+            case "contact_PowerLine": return "Power line contact";
+            case "contact_TrenchEdge": return "Too close to trench edge";
+            case "contact_Truck": return "Truck hit";
+            case "truck_hit_cab": return "Bucket/arm hit the truck cab";
+            case "truck_hit_wall": return "Bucket/arm hit the truck wall";
+            case "truck_hit_bed_floor": return "Bucket hit the truck bed floor";
+            case "truck_hit_chassis": return "Bucket/arm hit the truck chassis";
+            case "truck_hit_truck": return "Bucket hit the truck";
+            case "spill": return "Soil spilled";
+            case "spill_too_close": return "Soil dumped too close to trench";
+            case "over_dig": return "Dug too deep";
+            case "dig_outside_area": return "Digging outside the area";
+            case "bucket_over_worker": return "Bucket over a worker";
+            default: return type.Replace('_', ' ');
+        }
+    }
+
+    // A classic "error" buzz: two short, low, harsh pulses (square wave + slightly detuned copy), generated in code.
+    static AudioClip AlertClip()
+    {
+        const int rate = 44100;
+        const float pulse = 0.14F, gap = 0.07F;
+        float len = pulse * 2F + gap;
+        int n = (int)(rate * len);
+        var d = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            float t = i / (float)rate;
+            float local = t < pulse ? t : t - pulse - gap;
+            bool on = t < pulse || t > pulse + gap;
+            if (!on) { d[i] = 0F; continue; }
+            float env = Mathf.Clamp01(local / 0.005F) * Mathf.Clamp01((pulse - local) / 0.02F);
+            float a = Mathf.Sign(Mathf.Sin(2F * Mathf.PI * 196F * t));     // G3 square
+            float b = Mathf.Sign(Mathf.Sin(2F * Mathf.PI * 207F * t));     // detuned -> rough beating
+            d[i] = 0.32F * env * (a + 0.7F * b) / 1.7F;
+        }
+        var clip = AudioClip.Create("IncidentError", n, 1, rate, false);
+        clip.SetData(d, 0);
+        return clip;
     }
 }

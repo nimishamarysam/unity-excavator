@@ -17,7 +17,9 @@ using UnityEngine;
 public enum HazardKind { Worker, Obstacle, BuriedCable, PowerLine, TrenchEdge, Truck, BuriedPipe }
 
 // Which part of the machine counts when measuring distance.
-public enum HazardMeasure { WholeMachine, BucketTeethOnly, TracksOnly }
+// Attachment = boom, arm and bucket measured as thick line segments along their real centre lines
+// (not the colliders' convex hulls, which are much larger than the visible parts). Used for the power line.
+public enum HazardMeasure { WholeMachine, BucketTeethOnly, TracksOnly, Attachment }
 
 public abstract class Hazard : MonoBehaviour
 {
@@ -167,6 +169,28 @@ public class HazardTracker : MonoBehaviour
     }
     static bool Flipped(float a, float b) => a * b < 0F;
 
+    // Boom (radius 0.45 m), arm (0.35 m) and bucket (0.6 m around the hinge->teeth line), sampled every ~0.25 m.
+    float AttachmentDistance(Hazard h, float best)
+    {
+        var m = machine;
+        Seg(h, m.BoomBasePosition, m.BoomArmJointPosition, 0.45F, ref best);
+        Seg(h, m.BoomArmJointPosition, m.ArmBucketJointPosition, 0.35F, ref best);
+        Seg(h, m.BucketPivotPosition, m.BucketTipPosition, 0.6F, ref best);
+        return Mathf.Max(0F, best);
+    }
+
+    static void Seg(Hazard h, Vector3 a, Vector3 b, float radius, ref float best)
+    {
+        int n = Mathf.Clamp(Mathf.CeilToInt((b - a).magnitude / 0.25F), 2, 40);
+        for (int i = 0; i <= n; i++)
+        {
+            Vector3 p = Vector3.Lerp(a, b, i / (float)n);
+            Vector3 q = h.ClosestPointTo(p);
+            float d = (q - p).magnitude - radius;
+            if (d < best) { best = d; h.MachinePoint = p; h.HazardPoint = q; }
+        }
+    }
+
     float Distance(Hazard h)
     {
         Vector3 tip = machine.BucketTipPosition;
@@ -174,6 +198,7 @@ public class HazardTracker : MonoBehaviour
         float best = (hp0 - tip).magnitude;
         h.MachinePoint = tip; h.HazardPoint = hp0;
         if (h.measure == HazardMeasure.BucketTeethOnly) return best;
+        if (h.measure == HazardMeasure.Attachment) return AttachmentDistance(h, best);
 
         var cols = h.measure == HazardMeasure.TracksOnly ? tracks : all;
         if (h.measure == HazardMeasure.TracksOnly) best = float.MaxValue;

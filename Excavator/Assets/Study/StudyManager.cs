@@ -19,6 +19,11 @@ using UnityEngine.SceneManagement;
 //
 // Experimenter keys:  Enter = continue   P or gamepad Start = pause/resume
 //                     End = end the current trial early (F10 is taken by Unity's Recorder)
+// Gamepad only (drive lab, no keyboard):
+//   A  = start / continue: start the session (setup), start the task (briefing), next task (questionnaire)
+//   X  = end the current trial early (also while paused)
+//   setup screen: LB / RB = participant number -1 / +1, Y = practice trial on/off
+//   Start = pause / resume
 // ---------------------------------------------------------------------------
 
 public class StudyManager : MonoBehaviour
@@ -61,6 +66,7 @@ public class StudyManager : MonoBehaviour
     string participantText = "1";
     bool includePractice = true;
     bool startTrialAfterLoad;
+
     GUIStyle big, normal, boxStyle;
 
     void Awake()
@@ -146,10 +152,20 @@ public class StudyManager : MonoBehaviour
         bool pause = (kb != null && kb.pKey.wasPressedThisFrame) || (pad != null && pad.startButton.wasPressedThisFrame);
         bool abort = kb != null && kb.endKey.wasPressedThisFrame;
 
+        bool padX = pad != null && pad.buttonWest.wasPressedThisFrame;   // end trial
+        if (padX && (CurrentState == State.Running || CurrentState == State.Paused)) StudyLogger.Log("experimenter_gamepad", "X_end_trial");
+
         switch (CurrentState)
         {
             case State.Setup:
-                if (enter) BeginSession();
+                if (pad != null)
+                {
+                    int.TryParse(participantText, out int pid);
+                    if (pad.rightShoulder.wasPressedThisFrame) participantText = Mathf.Max(1, pid + 1).ToString();
+                    if (pad.leftShoulder.wasPressedThisFrame) participantText = Mathf.Max(1, pid - 1).ToString();
+                    if (pad.buttonNorth.wasPressedThisFrame) includePractice = !includePractice;
+                }
+                if (enter || padA) BeginSession();
                 break;
 
             case State.Briefing:
@@ -160,17 +176,17 @@ public class StudyManager : MonoBehaviour
                 TrialTime += Time.deltaTime;
                 float limit = CurrentTrial.scenario == StudyScenario.Practice ? practiceDurationSeconds : TrialLimit;
                 if (TrialTime >= limit) EndTrial("time_limit");
-                else if (abort) EndTrial("ended_by_experimenter");
+                else if (abort || padX) EndTrial("ended_by_experimenter");
                 else if (pause) { CurrentState = State.Paused; Freeze(true); StudyLogger.Log("pause"); }
                 break;
 
             case State.Paused:
                 if (pause) { CurrentState = State.Running; Freeze(false); StudyLogger.Log("resume"); }
-                else if (abort) EndTrial("ended_by_experimenter");
+                else if (abort || padX) EndTrial("ended_by_experimenter");
                 break;
 
             case State.Questionnaire:
-                if (enter) NextTrial();   // experimenter only (keyboard), so the participant cannot skip
+                if (enter || padA) NextTrial();
                 break;
         }
     }
@@ -189,6 +205,8 @@ public class StudyManager : MonoBehaviour
 
     // ---------- Screens (experimenter/participant panels, drawn with Unity's simple IMGUI) ----------
 
+    MiniMap briefingMap;
+
     void OnGUI()
     {
         if (big == null)
@@ -200,13 +218,18 @@ public class StudyManager : MonoBehaviour
 
         if (CurrentState == State.Running) return;
 
-        float w = Mathf.Min(900, Screen.width - 80), h = Mathf.Min(560, Screen.height - 80);
+        // Dig and dump: the task instruction screen also shows a detailed site map on the right.
+        MiniMap siteMap = null;
+        if (CurrentState == State.Briefing && CurrentTrial.scenario == StudyScenario.Hard_DigAndDump)
+            siteMap = briefingMap ??= DigDumpScenario.SiteMap();
+        float w = Mathf.Min(siteMap != null ? 1400 : 900, Screen.width - 80), h = Mathf.Min(siteMap != null ? 780 : 680, Screen.height - 80);
+        float mapW = siteMap != null ? Mathf.Min(480F, w * 0.4F) : 0F;
         var r = new Rect((Screen.width - w) / 2, (Screen.height - h) / 2, w, h);
         GUI.color = new Color(1, 1, 1, 0.97F);
         GUI.Box(r, GUIContent.none, boxStyle);
         GUI.Box(r, GUIContent.none, boxStyle);
         GUI.color = Color.white;
-        GUILayout.BeginArea(new Rect(r.x + 30, r.y + 25, r.width - 60, r.height - 50));
+        GUILayout.BeginArea(new Rect(r.x + 30, r.y + 25, r.width - 60 - (siteMap != null ? mapW + 30F : 0F), r.height - 50));
 
         switch (CurrentState)
         {
@@ -225,6 +248,7 @@ public class StudyManager : MonoBehaviour
                 GUILayout.Space(10);
                 GUILayout.Label("Data folder: " + StudyLogger.Instance.FolderPath, normal);
                 GUILayout.Space(20);
+                GUILayout.Label("Gamepad: LB / RB = participant number,  Y = practice on/off,  A = start", normal);
                 if (GUILayout.Button("Start session  (Enter)", GUILayout.Height(44))) BeginSession();
                 break;
 
@@ -255,7 +279,7 @@ public class StudyManager : MonoBehaviour
                 GUILayout.Space(10);
                 GUILayout.Label("Please fill in the SIM-TLX and SART questionnaires for this task.", normal);
                 GUILayout.FlexibleSpace();
-                GUILayout.Label("Experimenter: press Enter to continue.", normal);
+                GUILayout.Label("Experimenter: press A on the gamepad (or Enter) to continue.", normal);
                 break;
 
             case State.Finished:
@@ -265,6 +289,12 @@ public class StudyManager : MonoBehaviour
                 break;
         }
         GUILayout.EndArea();
+        if (siteMap != null)
+        {
+            var mr = new Rect(r.xMax - 30F - mapW, r.y + 55F, mapW, r.height - 80F);
+            GUI.Label(new Rect(mr.x, r.y + 22F, mapW, 30F), "Site map (seen from above)", normal);
+            siteMap.Draw(mr);
+        }
     }
 
     int CountMeasuredUpTo(int pos)

@@ -21,6 +21,8 @@ public static class CueKit
     // Objects on this layer are drawn ONLY by the BUCKET SIDE VIEW camera (C3 digging overlays:
     // bucket trajectory, height arrow, bucket angle). Layer 30 is unused in this project.
     public const int BucketSideOnlyLayer = 30;
+    // Objects on this layer are drawn ONLY in the driver (cab) view: the context cameras exclude it. Layer 29 is unused.
+    public const int DriverOnlyLayer = 29;
 
     public static readonly Color Look   = new Color(1F, 0.85F, 0.1F);
     public static readonly Color Warn   = new Color(1F, 0.5F, 0.05F);

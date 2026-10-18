@@ -10,7 +10,10 @@ using UnityEngine;
 // Every physics step, AFTER the ExcavatorController has applied the operator's input, it checks a set of
 // probe spheres along the arm and across the bucket. If any probe is inside a solid, the joint angles
 // (swing, boom, arm, bucket) are put back to the last pose that was free, so the bucket stops at the
-// truck wall instead of going through it. Each new contact is logged as "bucket_blocked".
+// truck wall instead of going through it. Each new contact is logged as "bucket_blocked" with the part
+// that was hit and the IMPACT SPEED (how fast the bucket/arm was moving into it). Only contacts faster than
+// impactSpeed count as an incident ("hit"); slow touches (e.g. resting the bucket on the wall while
+// dumping) are blocked and logged, but not counted.
 // ---------------------------------------------------------------------------
 
 [DefaultExecutionOrder(1000)]   // run after ExcavatorController.FixedUpdate
@@ -22,6 +25,8 @@ public class BucketBlocker : MonoBehaviour
     public float bucketProbeRadius = 0.25F;
     public float armProbeRadius = 0.25F;
     public float bucketHalfWidth = 0.45F;   // probes this far to each side of the bucket centre line
+    public float impactSpeed = 0.5F;        // m/s: contacts at least this fast are incidents
+    Vector3 safeTip, safeArm;
 
     Excavator m;
     bool hasSafe, blocked;
@@ -46,12 +51,28 @@ public class BucketBlocker : MonoBehaviour
     System.Collections.Generic.IEnumerable<(Vector3, float)> Probes()
     {
         Vector3 piv = m.ArmBucketJointPosition, tip = m.BucketTipPosition, armTop = m.BoomArmJointPosition;
-        Vector3 across = m.BucketTransform.right * bucketHalfWidth;
+        Vector3 across = Lateral() * bucketHalfWidth;
         for (int i = 0; i < 4; i++)
             for (int k = -1; k <= 1; k++)
                 yield return (Vector3.Lerp(piv, tip, i / 3F) + across * k, bucketProbeRadius);
         for (int i = 1; i <= 4; i++)
             yield return (Vector3.Lerp(piv, armTop, i * 0.15F), armProbeRadius);
+    }
+
+    // Across the bucket = horizontal, perpendicular to the arm's working plane (independent of the model's axes).
+    Vector3 Lateral()
+    {
+        Vector3 reach = m.BucketTipPosition - m.SwingCenter; reach.y = 0F;
+        reach = reach.sqrMagnitude > 0.01F ? reach.normalized : m.ForwardFlat;
+        return Vector3.Cross(Vector3.up, reach);
+    }
+
+    Vector3 ArmPoint => Vector3.Lerp(m.ArmBucketJointPosition, m.BoomArmJointPosition, 0.3F);
+
+    static string Part(Collider c)
+    {
+        string n = c.name.ToLowerInvariant();
+        return n.Contains("cab") ? "cab" : n.Contains("wall") ? "wall" : n.Contains("floor") ? "bed_floor" : n.Contains("chassis") ? "chassis" : "truck";
     }
 
     void FixedUpdate()
@@ -63,6 +84,7 @@ public class BucketBlocker : MonoBehaviour
         if (hit == null)
         {
             sSwing = m.swingAngle; sBoom = m.boomAngle; sArm = m.armAngle; sBucket = m.bucketAngle;
+            safeTip = m.BucketTipPosition; safeArm = ArmPoint;
             hasSafe = true;
             blocked = false;
             return;
@@ -72,7 +94,10 @@ public class BucketBlocker : MonoBehaviour
         {
             blocked = true;
             blocks++;
-            StudyLogger.Log("bucket_blocked", $"{hit.name};count={blocks}");
+            float dt = Mathf.Max(1e-4F, Time.fixedDeltaTime);
+            float speed = hasSafe ? Mathf.Max((m.BucketTipPosition - safeTip).magnitude, (ArmPoint - safeArm).magnitude) / dt : 0F;
+            bool impact = speed >= impactSpeed;
+            StudyLogger.Log("bucket_blocked", $"{hit.name};part={Part(hit)};count={blocks};speed={speed:F2};impact={(impact ? 1 : 0)}");
         }
         if (hasSafe)
         {
@@ -87,7 +112,7 @@ public class BucketBlocker : MonoBehaviour
     Collider Penetrating()
     {
         Vector3 piv = m.ArmBucketJointPosition, tip = m.BucketTipPosition, armTop = m.BoomArmJointPosition;
-        Vector3 across = m.BucketTransform.right * bucketHalfWidth;
+        Vector3 across = Lateral() * bucketHalfWidth;
 
         // Bucket: 4 points from hinge to teeth, each at the centre and both sides.
         for (int i = 0; i < 4; i++)

@@ -82,6 +82,7 @@ public class AttentionCues : MonoBehaviour
         Driving = gameObject.AddComponent<DrivingCues>();
         Driving.Init(this);
         gameObject.AddComponent<DiggingCues>().Init(this);
+        gameObject.AddComponent<UndergroundSideView>().Init(this);
         gameObject.AddComponent<TruckProximityCue>().Init(this);
 
         WorldRoot.gameObject.SetActive(false);
@@ -153,6 +154,7 @@ public class CueProfile
     public bool bucketSideHeightArrow = false;            // vertical arrow + height/depth in the BUCKET SIDE VIEW
     public bool bucketSideAngleLabel = false;             // current bucket angle next to the bucket in that view
     public bool heightArrowInDriverView = false;          // the height arrow (and its label) also in the driver view
+    public bool bucketSideUnderground = false;            // bucket side view becomes an underground cut-away in the pit (C2 + C3)
 
     public static CueProfile For(StudyScenario s)
     {
@@ -193,8 +195,9 @@ public class CueProfile
                     maxObstacleCues = 2, edgeMarkersWorkersOnly = true, workerMotionOnlyApproaching = true,
                     workerMotionArrow = false, groundRing = false, thinHighlight = true,
                     bannerWithTarget = true, steerThreshold = 25F, passAdviceInBanner = false, pathEndRing = false,
-                    trajectoryInBucketSideViewOnly = true, bucketSideHeightArrow = true, bucketSideAngleLabel = true,
-                    truckWallProximity = true, heightArrowInDriverView = true,
+                    trajectory = false,   // no suggested bucket path in Dig and dump (too much in the bucket side view)
+                    bucketSideHeightArrow = true,
+                    truckWallProximity = true, heightArrowInDriverView = true, bucketSideUnderground = true,
                 };
             default:
                 return new CueProfile();

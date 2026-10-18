@@ -43,6 +43,9 @@ public abstract class Scenario : MonoBehaviour
     // Time limit of this scenario in seconds (null = StudyManager.trialDurationSeconds).
     public virtual float? TimeLimitSeconds => null;
 
+    // Optional site sketch for the task panel (null = none). Filled by the scenario in Build.
+    public MiniMap Map { get; protected set; }
+
     public void Setup(ExcavatorController ctl, TrialInfo trial)
     {
         Ctl = ctl; M = ctl.Machine; Trial = trial;
@@ -146,7 +149,7 @@ public class ScenarioRunner : MonoBehaviour
 {
     public static Scenario Current { get; private set; }
     Scenario current;
-    GUIStyle title, body;
+    GUIStyle title, body, incidentStyle;
 
     void OnEnable()
     {
@@ -204,13 +207,29 @@ public class ScenarioRunner : MonoBehaviour
             title = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, wordWrap = true };
             body = new GUIStyle(GUI.skin.label) { fontSize = 17, wordWrap = true };
         }
-        var r = new Rect(16, 16, 520, 120);
+        if (incidentStyle == null) incidentStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold, wordWrap = true };
+
+        // Task panel: task, progress and incidents on the left; (if the scenario has one) a small line map on the right.
+        bool hasMap = current.Map != null;
+        const float textH = 118F, incH = 26F, mapW = 130F;
+        float width = hasMap ? 640F : 520F;
+        var r = new Rect(16, 16, width, textH + incH + 16F);
+        float textW = r.width - 24F - (hasMap ? mapW + 10F : 0F);
         GUI.color = new Color(0, 0, 0, 0.55F);
         GUI.DrawTexture(r, Texture2D.whiteTexture);
         GUI.color = Color.white;
-        GUILayout.BeginArea(new Rect(r.x + 12, r.y + 8, r.width - 24, r.height - 16));
+        GUILayout.BeginArea(new Rect(r.x + 12, r.y + 8, textW, textH));
         GUILayout.Label(current.TaskText, title);
         GUILayout.Label(current.ProgressText, body);
         GUILayout.EndArea();
+
+        // Incident line: counter + the last incident; red for a few seconds after a new one.
+        float ago = Time.unscaledTime - IncidentFeedback.LastIncidentTime;
+        string inc = IncidentFeedback.Count == 0 ? "Incidents: 0"
+                   : $"Incidents: {IncidentFeedback.Count}    Last: {IncidentFeedback.LastDescription} ({Mathf.FloorToInt(ago)} s ago)";
+        incidentStyle.normal.textColor = IncidentFeedback.Count > 0 && ago < 4F ? new Color(1F, 0.35F, 0.3F) : new Color(0.85F, 0.85F, 0.85F);
+        GUI.Label(new Rect(r.x + 12, r.y + 8 + textH, textW, incH), inc, incidentStyle);
+
+        if (hasMap) current.Map.Draw(new Rect(r.xMax - 8F - mapW, r.y + 8F, mapW, r.height - 16F));
     }
 }

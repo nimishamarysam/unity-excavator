@@ -487,6 +487,8 @@ public class Excavator
     public Vector3 BoomArmJointPosition => boomArmJoint.position;
     public Vector3 ArmBucketJointPosition => armBucketJoint.position;
     public Transform BucketTransform => bucketAxis;
+    // Boom foot (where the boom joins the upper body). Used by the study to measure attachment distances.
+    public Vector3 BoomBasePosition => boomAxis.position;
 
     // Rough maximum horizontal reach from the swing centre to the bucket teeth, in metres.
     public float MaxReach
