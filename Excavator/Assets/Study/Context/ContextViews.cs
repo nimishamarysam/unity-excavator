@@ -175,6 +175,7 @@ public class ContextViews : MonoBehaviour
 
         bool travel = ctl != null && ctl.IsTravelMode;
         BucketSideCamera = null;
+        OverBucketCamera = null;
 
         // Travel mode with obstacle cameras: same panel as the driving scenario - bird's-eye view in the
         // top half, the obstacle camera (PopupViews) in the bottom half when something is close.
@@ -197,6 +198,7 @@ public class ContextViews : MonoBehaviour
             {
                 Place(slots[i], set[i], LabelFor(set[i]));
                 if (set[i] == ContextView.BucketSide) BucketSideCamera = slots[i].cam;
+                if (set[i] == ContextView.OverBucket) OverBucketCamera = slots[i].cam;
             }
         }
     }
@@ -212,14 +214,22 @@ public class ContextViews : MonoBehaviour
         }
 
         // Bucket-side overlays (C3 digging) are drawn only by the camera that shows the bucket side view.
-        int sideOnly = 1 << CueKit.BucketSideOnlyLayer;
-        w.cam.cullingMask = v == ContextView.BucketSide ? (w.cam.cullingMask | sideOnly) : (w.cam.cullingMask & ~sideOnly);
+        // The bucket side view is for depth and curl only: it does NOT draw the obstacle / worker highlights
+        // (context-only layer) - those stay in the bird's-eye view, the view into the bucket and the driver view.
+        int sideOnly = 1 << CueKit.BucketSideOnlyLayer, ctxOnly = 1 << CueKit.ContextOnlyLayer;
+        w.cam.cullingMask = v == ContextView.BucketSide ? ((w.cam.cullingMask | sideOnly) & ~ctxOnly)
+                                                        : ((w.cam.cullingMask & ~sideOnly) | ctxOnly);
         w.cam.fieldOfView = v == ContextView.OverBucket ? 55F : v == ContextView.BucketSide ? fieldOfView : wideFieldOfView;
         Pose(v, out Vector3 pos, out Vector3 lookAt);
         if (switched) w.cam.transform.position = pos;   // jump straight to a new view (no camera flight)
         else w.cam.transform.position = Vector3.Lerp(w.cam.transform.position, pos, 1F - Mathf.Exp(-followSpeed * Time.unscaledDeltaTime));
         Vector3 up = v == ContextView.BirdsEye ? ctl.Machine.ForwardFlat : Vector3.up;   // top-down: machine forward is up
         w.cam.transform.rotation = Quaternion.LookRotation(lookAt - w.cam.transform.position, up);
+        // Cut-away: clip everything closer to the camera than a thin slab in front of the bucket.
+        float near = 0.2F;
+        if (v == ContextView.BucketSide && UndergroundSideView.Active)
+            near = Mathf.Max(0.2F, Vector3.Dot(lookAt - w.cam.transform.position, w.cam.transform.forward) - cutAwaySlab);
+        w.cam.nearClipPlane = near;
     }
 
     // The view into the bucket is shown when the BUCKET angle (as on the measurement bar) is above
@@ -243,6 +253,12 @@ public class ContextViews : MonoBehaviour
 
     // The camera currently showing the BUCKET SIDE VIEW (null if none). Used by the C3 overlays.
     public static Camera BucketSideCamera { get; private set; }
+    // The camera currently showing the VIEW INTO BUCKET (null if none). The C3 curl advice is shown there.
+    public static Camera OverBucketCamera { get; private set; }
+
+    // Cut-away: only things within this distance IN FRONT of the bucket's plane are drawn (near clip plane),
+    // so a worker or stakes between the camera and the bucket do not cover the section.
+    public float cutAwaySlab = 1.2F;
 
     // "View into bucket": a close camera that looks down into the bucket from a FIXED vantage point
     // relative to the arm's working plane: above the bucket, a little towards the cab and to the right

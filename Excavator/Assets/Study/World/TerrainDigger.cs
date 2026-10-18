@@ -283,6 +283,24 @@ public class TerrainDigger : MonoBehaviour
         return changed;
     }
 
+    // Smooth progress (0..1): the average over the same 0.5 m grid of how far each cell is dug towards the
+    // depth, each cell capped at 1 (full credit at depth - tolerance). Rises with every scoop instead of
+    // only when a whole cell reaches depth, so the "Trench done" number follows what the operator sees.
+    public float ProgressTo(float depth, float tolerance = 0.2F)
+    {
+        if (!hasZone) return 0F;
+        float full = Mathf.Max(0.05F, depth - tolerance), sum = 0F;
+        int total = 0;
+        for (float u = -halfU + 0.25F; u <= halfU - 0.25F; u += 0.5F)
+            for (float v = -halfV + 0.25F; v <= halfV - 0.25F; v += 0.5F)
+            {
+                Vector3 p = center + axisU * u + axisV * v;
+                total++;
+                sum += Mathf.Clamp01((ReferenceGroundHeight(p) - CurrentGroundHeight(p)) / full);
+            }
+        return total == 0 ? 0F : sum / total;
+    }
+
     // Share of the zone (0..1) that has been dug at least to the given depth.
     public float FractionDugTo(float depth, float tolerance = 0.15F)
     {

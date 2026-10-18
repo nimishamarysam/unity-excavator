@@ -41,8 +41,8 @@ public static class StudyDesign
     // The three scenarios. Their order is shuffled per condition block (see BuildTrials).
     static readonly StudyScenario[] scenarioOrder =
     {
-        StudyScenario.Easy_Driving, StudyScenario.Moderate_Digging, StudyScenario.Hard_DigAndDump
-        //StudyScenario.Hard_DigAndDump
+        //StudyScenario.Easy_Driving, StudyScenario.Moderate_Digging, StudyScenario.Hard_DigAndDump
+        StudyScenario.Moderate_Digging
     };
 
     // Participant 1 gets row 0, participant 2 row 1, participant 3 row 2, participant 4 row 0 ...

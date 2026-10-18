@@ -27,6 +27,7 @@ public class UndergroundSideView : MonoBehaviour
     public float halfSpan = 5F;          // section length on each side of the bucket (m)
     public float sectionDepth = 3.5F;    // how far below the original ground the section goes (m)
     public float behindBucket = 0.9F;    // section plane this far behind the bucket (seen from the camera)
+    public float labelDistance = 0.6F;   // C3: "PIPE x m" tag only when the teeth are closer than this (or at warning)
     const int N = 60;
 
     AttentionCues root;
@@ -229,7 +230,10 @@ public class UndergroundSideView : MonoBehaviour
             float dist = Mathf.Max(0F, Vector3.Distance(m.BucketTipPosition, q) - (h.kind == HazardKind.BuriedPipe ? 0.15F : 0.03F));   // to the pipe surface
             string name = h.kind == HazardKind.BuriedPipe ? "PIPE" : "CABLE";
             if (!Guidance) { serviceLabels[k].Hide(); k++; continue; }
-            PlaceLabel(serviceLabels[k], ContextViews.BucketSideCamera, q - Vector3.up * (rad + 0.12F), $"{name} {dist:0.00} m", c);
+            // C3: the distance tag only when the teeth are getting close (the coloured ring says the rest).
+            if (dist < labelDistance || h.CurrentLevel != Hazard.Level.Clear)
+                PlaceLabel(serviceLabels[k], ContextViews.BucketSideCamera, q + reachDir * (rad + 0.08F), $"{name} {dist:0.00} m", c);
+            else serviceLabels[k].Hide();
             k++;
         }
         for (int j = k; j < serviceRings.Count; j++) { CueKit.Hide(serviceRings[j]); serviceLabels[j].Hide(); }
@@ -249,9 +253,11 @@ public class UndergroundSideView : MonoBehaviour
         Vector3 vp = cam.WorldToViewportPoint(world);
         if (vp.z <= 0F || vp.x < 0F || vp.x > 1F || vp.y < 0F || vp.y > 1F) { box.Hide(); return; }
         Rect r = cam.rect;
-        Vector2 p = new Vector2(r.xMin + vp.x * r.width, r.yMin + vp.y * r.height);
-        p.y -= 0.004F;
+        // Beside the pipe, on the side with more room, and kept inside the window (no tag cut off at the edge).
+        bool left = vp.x > 0.65F;
+        float x = r.xMin + vp.x * r.width + (left ? -0.004F : 0.004F);
+        float y = Mathf.Clamp(r.yMin + vp.y * r.height, r.yMin + 0.03F, r.yMax - 0.03F);
         c.a = 1F;
-        box.ShowTag(p, new Vector2(0.5F, 1F), c, text);   // centred BELOW the pipe
+        box.ShowTag(new Vector2(x, y), new Vector2(left ? 1F : 0F, 0.5F), c, text);
     }
 }

@@ -208,7 +208,7 @@ public class DiggingCues : MonoBehaviour
             c = depth > target + 0.25F ? CueKit.Danger : depth >= target - 0.12F ? CueKit.Good : CueKit.Guide;
             txt = $"{depth:0.00} m deep\ntarget {target:0.00}";
             Vector3 t = new Vector3(tip.x, refY - target, tip.z) + off;
-            if (UndergroundSideView.Active) txt = $"{depth:0.00} m deep (target {target:0.00})";
+            if (UndergroundSideView.Active) txt = $"{depth:0.00} m deep";   // the green section line already shows the target
             Vector3 across = Vector3.Cross(Vector3.up, toCam.sqrMagnitude > 0.01F ? toCam.normalized : Vector3.forward);
             targetTick.loop = false;
             targetTick.positionCount = 2;
@@ -234,7 +234,8 @@ public class DiggingCues : MonoBehaviour
 
         // In the cut-away the label always goes to the LEFT of the arrow (the pipe label is placed below the pipe).
         PlaceText(heightText, cam, (top + bottom) / 2F, txt, c, UndergroundSideView.Active ? -1 : 0);
-        if (root.Profile.heightArrowInDriverView) PlaceText(heightTextDriver, m.OperatorCamera, (top + bottom) / 2F, txt.Replace("\n", "  "), c);
+        string driverTxt = UndergroundSideView.Active && tip.y < refY ? $"{refY - tip.y:0.00} m deep (target {TargetDepth:0.00})" : txt.Replace("\n", "  ");
+        if (root.Profile.heightArrowInDriverView) PlaceText(heightTextDriver, m.OperatorCamera, (top + bottom) / 2F, driverTxt, c);
         else HideText(heightTextDriver);
     }
 
@@ -664,21 +665,20 @@ public class DiggingCues : MonoBehaviour
         return curlKeys[curlKeys.Count - 1].phi;
     }
 
-    // Current bucket angle next to the bucket (bucket side view only).
+    // Curl advice next to the bucket in the VIEW INTO BUCKET (where the bucket's curl is easiest to see; the
+    // bucket side view stays for depth). Only while the teeth follow the suggested path: "CURL OK" (green),
+    // "CURL MORE" / "OPEN MORE" (orange). The angle itself is on the measurement bar, so it is not repeated.
+    // Falls back to the bucket side view if the view into the bucket is not shown.
     void DrawAngleLabel(Excavator m, Vector3 tip)
     {
-        var cam = ContextViews.BucketSideCamera;
-        if (!root.Profile.bucketSideAngleLabel || cam == null) { HideText(angleText); return; }
+        var cam = ContextViews.OverBucketCamera != null ? ContextViews.OverBucketCamera : ContextViews.BucketSideCamera;
         float ideal = IdealPhiNear(tip);
-        string txt = $"BUCKET {m.bucketAngle:0}°";
-        Color c = CueKit.Bright;
-        if (!float.IsNaN(ideal))
-        {
-            float diff = Mathf.DeltaAngle(ideal, CurrentPhi(m));   // > 0: more curled than ideal
-            if (Mathf.Abs(diff) <= curlMatchDegrees) { c = CueKit.Good; txt += "  OK"; }
-            else { c = CueKit.Warn; txt += diff < 0F ? "  CURL MORE" : "  OPEN MORE"; }
-        }
-        Vector3 pos = m.BucketPivotPosition + Vector3.up * 0.6F;
+        if (!root.Profile.bucketSideAngleLabel || cam == null || float.IsNaN(ideal)) { HideText(angleText); return; }
+        float diff = Mathf.DeltaAngle(ideal, CurrentPhi(m));   // > 0: more curled than ideal
+        bool ok = Mathf.Abs(diff) <= curlMatchDegrees;
+        string txt = ok ? "CURL OK" : diff < 0F ? "CURL MORE" : "OPEN MORE";
+        Color c = ok ? CueKit.Good : CueKit.Warn;
+        Vector3 pos = m.BucketPivotPosition + Vector3.up * 0.4F;
         PlaceText(angleText, cam, pos, txt, c);
     }
 
