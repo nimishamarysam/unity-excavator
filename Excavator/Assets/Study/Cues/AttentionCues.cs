@@ -181,6 +181,7 @@ public class CueProfile
                 {
                     name = "digging",
                     trajectoryInBucketSideViewOnly = true,
+                    trajectory = false,             // suggested bucket path off: the cut-away shows the soil to dig instead
                     bucketSideHeightArrow = true,
                     bucketSideAngleLabel = true, heightArrowInDriverView = true,
                     bucketSideUnderground = true,   // cut-away bucket side view in the trench (C2 + C3)

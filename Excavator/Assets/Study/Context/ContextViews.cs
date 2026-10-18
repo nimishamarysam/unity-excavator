@@ -21,7 +21,7 @@ using UnityEngine.UI;
 // Every window has a label so the participant knows what it shows.
 // ---------------------------------------------------------------------------
 
-public enum ContextView { BirdsEye, Rear, BucketSide, OverBucket, LeftSide, RightSide }
+public enum ContextView { BirdsEye, Rear, BucketSide, OverBucket, LeftSide, RightSide, PitTop }
 
 public class ContextViews : MonoBehaviour
 {
@@ -38,9 +38,27 @@ public class ContextViews : MonoBehaviour
     public float birdsEyeHeight = 20F;
     public float wideFieldOfView = 55F;
 
+    // DIGGING: the middle window shows the DIG PIT TOP VIEW instead of the view into the bucket (C2 and C3).
+    // A fixed camera straight above the trench, trench long side pointing up (like the bird's-eye view),
+    // high enough to show the whole trench plus pitTopMargin around it. The buried pipe and cable are
+    // drawn through the ground in this view (BuriedServicesXray).
+    public static bool PitTopViewInDigging = false;   // off: Digging uses the standard bird's-eye | view into bucket | bucket side view
+    public float pitTopFieldOfView = 40F;
+    public float pitTopMargin = 0.4F;   // metres shown beyond each end of the trench (was 1.2 m: closer view)
+
+    public static bool UsePitTopView
+    {
+        get
+        {
+            var sm = StudyManager.Instance;
+            return PitTopViewInDigging && sm != null && sm.CurrentTrial.scenario == StudyScenario.Moderate_Digging;
+        }
+    }
+
     ExcavatorController ctl;
     Window[] slots;
     Window travelBirdsEye;   // other scenarios, travel mode: bird's-eye in the TOP HALF (obstacle camera below it)
+    Window sideTall;         // operation mode: BUCKET SIDE VIEW over the middle + bottom slots while the view into the bucket is hidden
     bool drivingLayout;
 
     // True in the driving scenario: bird's-eye (top) + obstacle camera on proximity (bottom).
@@ -81,6 +99,9 @@ public class ContextViews : MonoBehaviour
         {
             travelBirdsEye = MakeWindow("TravelTop", StudyLayout.PanelSlot(0, 2), 53);
             Show(travelBirdsEye, false);
+            Rect mid = StudyLayout.PanelSlot(1), bottom = StudyLayout.PanelSlot(2);
+            sideTall = MakeWindow("SideTall", new Rect(bottom.xMin, bottom.yMin, bottom.width, mid.yMax - bottom.yMin), 54);
+            Show(sideTall, false);
         }
     }
 
@@ -134,11 +155,44 @@ public class ContextViews : MonoBehaviour
         go.GetComponent<Image>().color = new Color(1, 1, 1, 0.9F);
     }
 
-    void OnDisable() { BucketSideCamera = null; }
+    void OnDisable()
+    {
+        BucketSideCamera = null; OverBucketCamera = null; PitTopCamera = null;
+        Camera.onPreCull -= PitPreCull; Camera.onPostRender -= PitPostRender; RestoreMachine();
+    }
+
+    // ---- DIG PIT TOP VIEW: the machine (cab, boom, arm) is not drawn, only the bucket, so it does not hide the trench ----
+    public bool hideMachineInPitView = true;
+    Renderer[] machineRenderers;
+    readonly System.Collections.Generic.List<Renderer> hiddenForPit = new System.Collections.Generic.List<Renderer>();
+
+    void OnEnable() { Camera.onPreCull += PitPreCull; Camera.onPostRender += PitPostRender; }
+
+    void PitPreCull(Camera cam)
+    {
+        if (!hideMachineInPitView || cam == null || cam != PitTopCamera || ctl == null || ctl.Machine == null) return;
+        var m = ctl.Machine;
+        if (machineRenderers == null) machineRenderers = m.transform.GetComponentsInChildren<Renderer>(true);
+        Transform keep = m.BucketTransform;
+        foreach (var r in machineRenderers)
+        {
+            if (r == null || !r.enabled || (keep != null && r.transform.IsChildOf(keep))) continue;
+            r.enabled = false;
+            hiddenForPit.Add(r);
+        }
+    }
+
+    void PitPostRender(Camera cam) { if (cam == PitTopCamera) RestoreMachine(); }
+
+    void RestoreMachine()
+    {
+        foreach (var r in hiddenForPit) if (r != null) r.enabled = true;
+        hiddenForPit.Clear();
+    }
 
     static void Show(Window w, bool v)
     {
-        if (w.visible == v) return;
+        if (w == null || w.visible == v) return;
         w.visible = v;
         w.cam.enabled = v;
         w.frame.SetActive(v);
@@ -147,6 +201,7 @@ public class ContextViews : MonoBehaviour
 
     static readonly ContextView[] TravelSet = { ContextView.BirdsEye, ContextView.LeftSide, ContextView.RightSide };
     static readonly ContextView[] OperationSet = { ContextView.BirdsEye, ContextView.OverBucket, ContextView.BucketSide };
+    static readonly ContextView[] DiggingOperationSet = { ContextView.BirdsEye, ContextView.PitTop, ContextView.BucketSide };
 
     static string LabelFor(ContextView v)
     {
@@ -155,6 +210,7 @@ public class ContextViews : MonoBehaviour
             case ContextView.Rear: return "REAR VIEW";
             case ContextView.BucketSide: return "BUCKET SIDE VIEW";
             case ContextView.OverBucket: return "VIEW INTO BUCKET";
+            case ContextView.PitTop: return "DIG PIT (TOP VIEW)";
             case ContextView.LeftSide: return "LEFT SIDE";
             case ContextView.RightSide: return "RIGHT SIDE";
             default: return "BIRD'S-EYE VIEW";
@@ -163,6 +219,9 @@ public class ContextViews : MonoBehaviour
 
     void LateUpdate()
     {
+        // Windows are made in Init. After a script reload in Play mode (code saved while playing) they are lost:
+        // do nothing until the next trial builds them again.
+        if (slots == null || (!drivingLayout && travelBirdsEye == null)) return;
         var sm = StudyManager.Instance;
         bool show = sm != null && sm.ShowContextViews && ctl != null && ctl.Machine != null &&
                     (sm.CurrentState == StudyManager.State.Running || sm.CurrentState == StudyManager.State.Paused);
@@ -176,29 +235,43 @@ public class ContextViews : MonoBehaviour
         bool travel = ctl != null && ctl.IsTravelMode;
         BucketSideCamera = null;
         OverBucketCamera = null;
+        PitTopCamera = null;
 
         // Travel mode with obstacle cameras: same panel as the driving scenario - bird's-eye view in the
         // top half, the obstacle camera (PopupViews) in the bottom half when something is close.
         if (travel && PopupStyleForDriving)
         {
             for (int i = 0; i < 3; i++) Show(slots[i], false);
+            Show(sideTall, false);
             Show(travelBirdsEye, show);
             if (show) Place(travelBirdsEye, ContextView.BirdsEye, LabelFor(ContextView.BirdsEye));
             return;
         }
         Show(travelBirdsEye, false);
 
-        var set = travel ? TravelSet : OperationSet;
+        var set = travel ? TravelSet : UsePitTopView ? DiggingOperationSet : OperationSet;
+        // Operation mode: while the view into the bucket is hidden (bucket angle 0), the BUCKET SIDE VIEW takes
+        // the middle AND bottom slots (one tall window) instead of leaving the middle slot empty.
+        bool intoOn = !(set[1] == ContextView.OverBucket) || IntoBucketWanted();
+        bool tall = show && !travel && !intoOn && set[2] == ContextView.BucketSide;
+        Show(sideTall, tall);
+        if (tall)
+        {
+            Place(sideTall, ContextView.BucketSide, LabelFor(ContextView.BucketSide));
+            BucketSideCamera = sideTall.cam;
+        }
         for (int i = 0; i < 3; i++)
         {
             bool slotOn = show && !(travel && PopupStyleForDriving && i > 0);   // popup style: bird's-eye only
-            if (slotOn && set[i] == ContextView.OverBucket && !IntoBucketWanted()) slotOn = false;
+            if (slotOn && set[i] == ContextView.OverBucket && !intoOn) slotOn = false;
+            if (tall && i == 2) slotOn = false;                               // shown in the tall window instead
             Show(slots[i], slotOn);
             if (slotOn)
             {
                 Place(slots[i], set[i], LabelFor(set[i]));
                 if (set[i] == ContextView.BucketSide) BucketSideCamera = slots[i].cam;
                 if (set[i] == ContextView.OverBucket) OverBucketCamera = slots[i].cam;
+                if (set[i] == ContextView.PitTop) PitTopCamera = slots[i].cam;
             }
         }
     }
@@ -219,11 +292,13 @@ public class ContextViews : MonoBehaviour
         int sideOnly = 1 << CueKit.BucketSideOnlyLayer, ctxOnly = 1 << CueKit.ContextOnlyLayer;
         w.cam.cullingMask = v == ContextView.BucketSide ? ((w.cam.cullingMask | sideOnly) & ~ctxOnly)
                                                         : ((w.cam.cullingMask & ~sideOnly) | ctxOnly);
-        w.cam.fieldOfView = v == ContextView.OverBucket ? 55F : v == ContextView.BucketSide ? fieldOfView : wideFieldOfView;
+        w.cam.fieldOfView = v == ContextView.OverBucket ? 55F : v == ContextView.BucketSide ? fieldOfView
+                          : v == ContextView.PitTop ? pitTopFieldOfView : wideFieldOfView;
         Pose(v, out Vector3 pos, out Vector3 lookAt);
         if (switched) w.cam.transform.position = pos;   // jump straight to a new view (no camera flight)
         else w.cam.transform.position = Vector3.Lerp(w.cam.transform.position, pos, 1F - Mathf.Exp(-followSpeed * Time.unscaledDeltaTime));
-        Vector3 up = v == ContextView.BirdsEye ? ctl.Machine.ForwardFlat : Vector3.up;   // top-down: machine forward is up
+        Vector3 up = v == ContextView.BirdsEye ? ctl.Machine.ForwardFlat
+                   : v == ContextView.PitTop ? PitAxis() : Vector3.up;   // top-down: machine forward / trench long side is up
         w.cam.transform.rotation = Quaternion.LookRotation(lookAt - w.cam.transform.position, up);
         // Cut-away: clip everything closer to the camera than a thin slab in front of the bucket.
         float near = 0.2F;
@@ -234,14 +309,15 @@ public class ContextViews : MonoBehaviour
 
     // The view into the bucket is shown when the BUCKET angle (as on the measurement bar) is above
     // intoBucketMinAngle (2 degree hysteresis, 0.4 s hold against flicker).
-    public float intoBucketMinAngle = 5F;
+    public float intoBucketMinAngle = 1F;          // shown when the bucket angle is above 0 (above 1 deg, as the bar rounds)
+    public float intoBucketHysteresis = 0.5F;      // hidden again at or below 0.5 deg
     bool intoBucketOn;
     float intoBucketChanged = -10F;
 
     bool IntoBucketWanted()
     {
         float a = ctl.Machine.bucketAngle;
-        bool want = intoBucketOn ? a > intoBucketMinAngle - 2F : a > intoBucketMinAngle;
+        bool want = intoBucketOn ? a > intoBucketMinAngle - intoBucketHysteresis : a > intoBucketMinAngle;
         if (want != intoBucketOn && Time.unscaledTime - intoBucketChanged > 0.4F)
         {
             intoBucketOn = want;
@@ -255,6 +331,27 @@ public class ContextViews : MonoBehaviour
     public static Camera BucketSideCamera { get; private set; }
     // The camera currently showing the VIEW INTO BUCKET (null if none). The C3 curl advice is shown there.
     public static Camera OverBucketCamera { get; private set; }
+    // The camera currently showing the DIG PIT TOP VIEW (null if none). The buried pipe/cable x-ray is drawn there.
+    public static Camera PitTopCamera { get; private set; }
+
+    Vector3 PitAxis()
+    {
+        var d = TerrainDigger.Instance;
+        return d != null && d.HasZone ? d.ZoneAxisU : ctl.Machine.ForwardFlat;
+    }
+
+    // Straight above the middle of the dig zone, high enough for the whole zone + margin.
+    void PitTop(out Vector3 pos, out Vector3 lookAt)
+    {
+        var d = TerrainDigger.Instance;
+        if (d == null || !d.HasZone) { IntoBucket(out pos, out lookAt); return; }
+        Vector3 c = d.ZoneCenter;
+        c.y = TerrainDigger.ReferenceGroundHeight(c);
+        float half = Mathf.Max(d.ZoneHalfLength, d.ZoneHalfWidth) + pitTopMargin;
+        float h = half / Mathf.Tan(pitTopFieldOfView * 0.5F * Mathf.Deg2Rad);
+        lookAt = c;
+        pos = c + Vector3.up * h - d.ZoneAxisU * 0.01F;   // tiny offset so "up" is well defined
+    }
 
     // Cut-away: only things within this distance IN FRONT of the bucket's plane are drawn (near clip plane),
     // so a worker or stakes between the camera and the bucket do not cover the section.
@@ -321,6 +418,9 @@ public class ContextViews : MonoBehaviour
             }
             case ContextView.OverBucket:
                 IntoBucket(out pos, out lookAt);
+                break;
+            case ContextView.PitTop:
+                PitTop(out pos, out lookAt);
                 break;
             case ContextView.LeftSide:
             case ContextView.RightSide:

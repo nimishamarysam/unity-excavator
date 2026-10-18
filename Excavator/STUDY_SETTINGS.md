@@ -59,7 +59,8 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Bird's-eye height | `birdsEyeHeight` | 20 m | `Study/Context/ContextViews.cs` |
 | Bucket side view distance | `bucketSideDistance` | 5 m | `Study/Context/ContextViews.cs` |
 | View into bucket: distance / side shift | `intoBucketDistance`, `intoBucketSideShift` | 3.2 m, 1.3 m | `Study/Context/ContextViews.cs` |
-| View into bucket shown above bucket angle | `intoBucketMinAngle` | 5° | `Study/Context/ContextViews.cs` |
+| View into bucket shown above bucket angle (hidden again at or below min − hysteresis) | `intoBucketMinAngle`, `intoBucketHysteresis` | 1°, 0.5° (i.e. shown when the bar reads above 0°) | `Study/Context/ContextViews.cs` |
+| While the view into bucket is hidden, the bucket side view fills the middle + bottom slots (one tall window) | `sideTall` window in `LateUpdate()` | – | `Study/Context/ContextViews.cs` |
 | Camera poses (all views) | `Pose()` | – | `Study/Context/ContextViews.cs` |
 | Obstacle camera docked in panel (true) or floating in driver view (false) | `PopupViews.DockInPanel` (static switch) | `true` | `Study/Context/PopupViews.cs` |
 | Obstacle camera opens at | `openDistanceObstacle`, `openDistanceWorker` | 4 m, 8 m | `Study/Context/PopupViews.cs` |
@@ -70,7 +71,7 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 
 | What | Setting | Default | File |
 |---|---|---|---|
-| Enabled per scenario | `CueProfile.bucketSideUnderground` | on in Dig and dump only | `Study/Cues/AttentionCues.cs` (`CueProfile.For`) |
+| Enabled per scenario | `CueProfile.bucketSideUnderground` | on in Digging and Dig and dump | `Study/Cues/AttentionCues.cs` (`CueProfile.For`) |
 | Section length each side of bucket | `halfSpan` | 5 m | `Study/Cues/UndergroundSideView.cs` |
 | Section depth below original ground | `sectionDepth` | 3.5 m | `Study/Cues/UndergroundSideView.cs` |
 | Section plane behind the bucket | `behindBucket` | 0.9 m | `Study/Cues/UndergroundSideView.cs` |
@@ -80,6 +81,16 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Curl advice (CURL OK / MORE / OPEN MORE) | `CueProfile.bucketSideAngleLabel`; shown in the VIEW INTO BUCKET, only near the suggested path | – | `Study/Cues/DiggingCues.cs` (`DrawAngleLabel`) |
 | Switch-on / switch-off thresholds | `LateUpdate()` (on: teeth < ground + 0.3 m, off: > ground + 0.8 m) | – | `Study/Cues/UndergroundSideView.cs` |
 | Which services are drawn, colours, label | `Draw()` (BuriedPipe, BuriedCable; C2 grey circle, C3 warning colours + "PIPE x m") | – | `Study/Cues/UndergroundSideView.cs` |
+
+### Dig pit top view + buried services x-ray (Digging, C2 and C3)
+
+| What | Setting | Default | File |
+|---|---|---|---|
+| Middle window = DIG PIT (TOP VIEW) instead of VIEW INTO BUCKET in Digging | `ContextViews.PitTopViewInDigging` (static switch) | `false` (Digging uses bird's-eye / view into bucket / bucket side view) | `Study/Context/ContextViews.cs` |
+| Pit top view field of view / margin around the trench | `pitTopFieldOfView`, `pitTopMargin` | 40°, 0.4 m | `Study/Context/ContextViews.cs` |
+| Pit top view draws only the bucket (cab, boom, arm hidden for that camera) | `hideMachineInPitView` | `true` | `Study/Context/ContextViews.cs` |
+| X-ray of pipe and cable (drawn in the view into bucket; in the pit top view when that is switched on) | `CueProfile.intoBucketXray` | on in Digging | `Study/Cues/AttentionCues.cs` (`CueProfile.For`) |
+| Line width / colour | `pipeWidth`, `cableWidth`, `PipeColor`, `CableColor` | 0.3 m blue, 0.1 m orange | `Study/Cues/BuriedServicesXray.cs` |
 
 ## 5. Attention cues (C3)
 
@@ -104,7 +115,8 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 |---|---|---|
 | Obstacle / worker | `workerRange` 12 m, `obstacleExtra` 3 m (cue distance = warn + this), `powerLineExtra` 2 m, `cableExtra` 0.8 m, `hysteresis` 0.5 m, `motionPreview` 2 s | `Study/Cues/ObstacleCues.cs` |
 | Driving path | `planRateHz` 10, `maxPathLength` 28 m, `obstacleMargin` 0.6 m, `workerMargin` 1.2 m, `chevronSpacing` 2 m, `chevronSpeed` 1.5 m/s, `nearPathDistance` 2.5 m | `Study/Cues/DrivingCues.cs` |
-| Dig area / trajectory | `cutDepthPerPass` 0.45 m, `dragLength` 1.6 m, `replanSeconds` 0.6 s, `reachFraction` 0.85, `markerMinBucketAngle` 20°, `serviceMargin` 0.05 m, `curlMatchDegrees` 15° | `Study/Cues/DiggingCues.cs` |
+| Dig area / trajectory | `cutDepthPerPass` 0.45 m, `dragLength` 1.6 m, `replanSeconds` 0.6 s, `reachFraction` 0.85, `markerMinBucketAngle` 20°, `serviceMargin` 0.05 m, `curlMatchDegrees` 15°; trajectory progress: `onPathDistance` 0.5 m (teeth following the path), `offPathDistance` 0.3 m (path ahead turns orange during a scoop) | `Study/Cues/DiggingCues.cs` |
+| Bucket trajectory shown only when the bucket is in position to dig (teeth over dig area, < 1.5 m above ground) | `LateUpdate()` (`BucketInDigArea`) | `Study/Cues/DiggingCues.cs` |
 | Truck wall proximity | `showGap` 1.2 m, `warnGap` 0.6 m, `dangerGap` 0.25 m, `rimLength` 1.6 m, field size/bulge | `Study/Cues/TruckProximityCue.cs` |
 | Cue colours (yellow/orange/red/cyan/green) | `Look`, `Warn`, `Danger`, `Guide`, `Good` | `Study/Cues/CueKit.cs` |
 | Render layers (context-only, bucket-side-only, driver-only) | `ContextOnlyLayer` 31, `BucketSideOnlyLayer` 30, `DriverOnlyLayer` 29 (const) | `Study/Cues/CueKit.cs` |
@@ -117,7 +129,7 @@ All in `Study/Scenarios/Scenarios.cs` unless noted. Per-trial randomness uses `R
 |---|---|
 | Practice | dig square 3×3 m, depth 1.5 m; spoil square 3.5 m (in `PracticeScenario.Build`) |
 | Easy – Driving | `GateWidth` 10 m; `GatePassBefore` 1.5 m (gate counts when the machine centre is within 1.5 m before the gate line or up to 4 m past it); `gates[]` positions; `start`; `stopLine`; barrel positions + jitter; worker timings (`crosserAt` 0.5–3.5 s after gate 1, `behindAt` 1.5–3.5 s after gate 4, stops 4 s); finish = on line, < 1 km/h for 1 s |
-| Moderate – Digging | `FixedLayout` (static switch, `true` = same trench/cable/pipe/spoil layout in every trial from `LayoutSeed` 20261018 → cable right, spoil square left; worker timing still per trial); `TargetDepth` 1.2 m; `SpoilSize` 2.5 m; `SpoilMinGap` 5 m; `SpoilSwingDeg` 120°; `PipeBelowTarget` 0.25 m; `WorkerStandSeconds` 6 s; `workPos`; `StartBehind` 9 m; trench length 0.43 × reach; cable 0.9 m deep, 0.5–0.8 m outside the edge; worker at 45–110 s; bucket over worker = `OverWorkerRadius` 1.0 m (hinge→teeth segment, horizontal) and whole bucket above the worker's ground; over-dig = target + 0.35 m; finish = 75 % dug to target |
+| Moderate – Digging | `FixedLayout` (static switch, `true` = same trench/cable/pipe/spoil layout in every trial from `LayoutSeed` 20261018 → cable right, spoil square left; worker timing still per trial); `TargetDepth` 1.2 m; Trench done % = smooth progress `TerrainDigger.ProgressTo` (each 0.5 m cell partial credit, full at target − `ProgressTolerance` 0.2 = 1.0 m), trial completed at `CompleteAt` 0.85 of the same number; `SpoilSize` 2.5 m; `SpoilMinGap` 5 m; `SpoilSwingDeg` 120°; `PipeBelowTarget` 0.25 m; `WorkerStandSeconds` 6 s; `workPos`; `StartBehind` 9 m; trench length 0.43 × reach; cable 0.9 m deep, 0.5–0.8 m outside the edge; worker at 45–110 s; bucket over worker = `OverWorkerRadius` 1.0 m (hinge→teeth segment, horizontal) and whole bucket above the worker's ground; over-dig = target + 0.35 m; (old whole-cell share `FractionDugTo` still logged as dug= in the summary) |
 | Hard – Dig and dump | `Goal` 4 loads; `Limit` 360 s; lane waypoints `W1`, `W2`, `WP`; `TruckOffset` 0.75 × reach; `PowerLineHeight` 5.8 m; `PowerLineBeyondTruck` 1.6 m; `PitPipeEnabled` true; `PipeDepth` 1.2 m; pit 4.5 m; workers at 35–90 s (pit) and 150–230 s (truck); dig target for cues = `PipeDepth − 0.3` m |
 | Task panel text | `TaskText`, `ProgressText` in each scenario class |
 | Time limit per scenario | `TimeLimitSeconds` override (else `trialDurationSeconds`) — `Study/Scenarios/Scenario.cs` |

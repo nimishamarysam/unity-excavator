@@ -47,6 +47,11 @@ public class DiggingCues : MonoBehaviour
     public float markerMinBucketAngle = 20F;   // teeth marker only when the bucket angle is above this
     public float serviceMargin = 0.05F;   // extra clearance kept above the warning distance of buried services
     public float curlMatchDegrees = 15F;  // real curl within this of the ideal = green
+    // Trajectory progress: the part of the path the teeth have already followed fades out, the part ahead
+    // stays bright, a dot marks where the teeth are on the path, and the path ahead turns orange when the
+    // teeth are more than offPathDistance off it during a scoop.
+    public float offPathDistance = 0.3F;
+    public float onPathDistance = 0.5F;   // teeth closer than this to the path count as following it
 
     AttentionCues root;
     BucketLoad load;
@@ -67,6 +72,9 @@ public class DiggingCues : MonoBehaviour
     bool hasPlan;
     float nextPlan;
     readonly List<Vector3> cutPts = new List<Vector3>();
+    LineRenderer cutDone, hereDot;
+    float progressS;      // how far along the path (m) the teeth have got in this scoop
+    bool offPath;
     Vector3 entry, aboveEntry, lateral;
     Vector3 lastLoggedEntry = Vector3.one * 1e6F;
     string tipState = "";
@@ -91,6 +99,8 @@ public class DiggingCues : MonoBehaviour
         int trajLayer = r.Profile.trajectoryInBucketSideViewOnly ? side : 0;
         approach  = CueKit.Line(w, "CueTrajApproach", 0.035F, true, false, trajLayer);
         cut       = CueKit.Line(w, "CueTrajCut", 0.09F, true, false, trajLayer);
+        cutDone   = CueKit.Line(w, "CueTrajDone", 0.05F, true, false, trajLayer);
+        hereDot   = CueKit.Line(w, "CueTrajHere", 0.045F, true, false, trajLayer);
         entryRing = CueKit.Line(w, "CueTrajEntry", 0.06F, true, true, trajLayer);
         for (int i = 0; i < 8; i++) arrows.Add(CueKit.Line(w, "CueTrajArrow", 0.06F, true, false, trajLayer));
 
@@ -124,7 +134,9 @@ public class DiggingCues : MonoBehaviour
         if (wantArea) DrawArea(); else HideArea();
 
         bool loaded = load != null && load.IsLoaded;
-        bool wantTraj = op && root.TrajectoryOn && !loaded && UpdatePlan();
+        // The suggested path only while the bucket is in a position to dig (teeth over the dig area, less than
+        // 1.5 m above the ground) - not while it is raised, swung away or carrying soil.
+        bool wantTraj = op && root.TrajectoryOn && !loaded && BucketInDigArea() && UpdatePlan();
         if (wantTraj != trajShown) { trajShown = wantTraj; AttentionCues.LogCue(wantTraj, "bucket_trajectory", wantTraj ? EntryText() : ""); }
         if (wantTraj) DrawTrajectory(); else HideTrajectory();
 
@@ -556,6 +568,7 @@ public class DiggingCues : MonoBehaviour
         float cut0 = Mathf.Min(cutDepthPerPass, Remaining(e));
 
         cutPts.Clear();
+        progressS = 0F;
         entry = new Vector3(e.x, TerrainDigger.CurrentGroundHeight(e), e.z);
         aboveEntry = entry + Vector3.up * 0.9F;
         cutPts.Add(aboveEntry);
@@ -590,14 +603,70 @@ public class DiggingCues : MonoBehaviour
         var m = root.M;
         Vector3 tip = m.BucketTipPosition;
 
-        // Main path of the scoop.
+        // Arc length along the path.
+        int n = cutPts.Count;
+        var cum = new float[n];
+        float total = 0F;
+        for (int i = 1; i < n; i++) { total += (cutPts[i] - cutPts[i - 1]).magnitude; cum[i] = total; }
+
+        // Where are the teeth on the path? Closest point of the polyline and its distance along it.
+        float bestD = float.MaxValue, bestS = 0F;
+        Vector3 bestP = cutPts[0];
+        for (int i = 1; i < n; i++)
+        {
+            Vector3 a = cutPts[i - 1], ab = cutPts[i] - a;
+            float t = Mathf.Clamp01(Vector3.Dot(tip - a, ab) / Mathf.Max(ab.sqrMagnitude, 1e-6F));
+            Vector3 q = a + ab * t;
+            float dd = (tip - q).magnitude;
+            if (dd < bestD) { bestD = dd; bestS = cum[i - 1] + ab.magnitude * t; bestP = q; }
+        }
+        if (bestD < onPathDistance) progressS = Mathf.Max(progressS, bestS);   // only moves forward
+
+        // Off the path: during a scoop, the teeth drift more than offPathDistance away (but are still near it).
+        bool off = Scooping() && bestD > offPathDistance && bestD < 1.2F;
+        if (off != offPath) { offPath = off; StudyLogger.Log("cue_trajectory_offpath", off ? $"on;dist={bestD:F2}" : "off"); }
+
+        // Split the path at the progress point: done part (faded) and the part ahead (bright).
+        var done = new List<Vector3>();
+        var ahead = new List<Vector3>();
+        Vector3 split = PointAt(cum, progressS);
+        for (int i = 0; i < n; i++) if (cum[i] < progressS) done.Add(cutPts[i]);
+        if (done.Count > 0) done.Add(split);
+        ahead.Add(split);
+        for (int i = 0; i < n; i++) if (cum[i] > progressS) ahead.Add(cutPts[i]);
+
+        if (done.Count >= 2)
+        {
+            cutDone.loop = false;
+            cutDone.positionCount = done.Count;
+            cutDone.SetPositions(done.ToArray());
+            CueKit.Paint(cutDone, CueKit.Alpha(CueKit.Bright, 0.25F));
+        }
+        else CueKit.Hide(cutDone);
+
         cut.loop = false;
-        cut.positionCount = cutPts.Count;
-        cut.SetPositions(cutPts.ToArray());
+        cut.positionCount = ahead.Count;
+        cut.SetPositions(ahead.ToArray());
+        Color head = off ? CueKit.Warn : CueKit.Guide;
         var g = new Gradient();
-        g.SetKeys(new[] { new GradientColorKey(CueKit.Guide, 0F), new GradientColorKey(CueKit.Bright, 1F) },
-                  new[] { new GradientAlphaKey(0.95F, 0F), new GradientAlphaKey(0.7F, 1F) });
+        g.SetKeys(new[] { new GradientColorKey(head, 0F), new GradientColorKey(off ? CueKit.Warn : CueKit.Bright, 1F) },
+                  new[] { new GradientAlphaKey(1F, 0F), new GradientAlphaKey(0.7F, 1F) });
         cut.colorGradient = g;
+
+        // "You are here": a small ring on the path at the teeth (green on the path, orange off it), in the arm's plane.
+        if (bestD < 1.2F)
+        {
+            const int R = 16;
+            hereDot.loop = true;
+            hereDot.positionCount = R;
+            for (int j = 0; j < R; j++)
+            {
+                float ang = j / (float)R * Mathf.PI * 2F;
+                hereDot.SetPosition(j, bestP + outDir * (Mathf.Cos(ang) * 0.12F) + Vector3.up * (Mathf.Sin(ang) * 0.12F));
+            }
+            CueKit.Paint(hereDot, bestD <= offPathDistance ? CueKit.Good : CueKit.Warn);
+        }
+        else CueKit.Hide(hereDot);
 
         // Entry marker on the ground.
         CueKit.FlatCircle(entryRing, entry + Vector3.up * 0.04F, 0.4F);
@@ -613,14 +682,11 @@ public class DiggingCues : MonoBehaviour
         }
         else CueKit.Hide(approach);
 
-        // Arrows moving along the scoop path.
-        float total = 0F;
-        var cum = new float[cutPts.Count];
-        for (int i = 1; i < cutPts.Count; i++) { total += (cutPts[i] - cutPts[i - 1]).magnitude; cum[i] = total; }
+        // Arrows moving along the part of the path still ahead.
         float spacing = 0.7F;
         float phase = Mathf.Repeat(Time.unscaledTime * 0.8F, spacing);
         int used = 0;
-        for (float s = phase + 0.2F; s < total - 0.1F && used < arrows.Count; s += spacing)
+        for (float s = progressS + phase + 0.2F; s < total - 0.1F && used < arrows.Count; s += spacing)
         {
             int i = 1;
             while (i < cum.Length - 1 && cum[i] < s) i++;
@@ -635,6 +701,16 @@ public class DiggingCues : MonoBehaviour
 
         DrawAngleLabel(m, tip);
 
+    }
+
+    // Point at arc length s along cutPts (cum = cumulative lengths).
+    Vector3 PointAt(float[] cum, float s)
+    {
+        if (s <= 0F || cutPts.Count < 2) return cutPts[0];
+        for (int i = 1; i < cutPts.Count; i++)
+            if (cum[i] >= s)
+                return Vector3.Lerp(cutPts[i - 1], cutPts[i], Mathf.InverseLerp(cum[i - 1], cum[i], s));
+        return cutPts[cutPts.Count - 1];
     }
 
     // Current curl of the real bucket, in the same measure.
@@ -685,6 +761,8 @@ public class DiggingCues : MonoBehaviour
     void HideTrajectory()
     {
         CueKit.Hide(cut); CueKit.Hide(approach); CueKit.Hide(entryRing);
+        CueKit.Hide(cutDone); CueKit.Hide(hereDot);
+        if (offPath) { offPath = false; StudyLogger.Log("cue_trajectory_offpath", "off"); }
         foreach (var a in arrows) CueKit.Hide(a);
         HideText(angleText);
         if (load != null && load.IsLoaded) hasPlan = false;   // plan a fresh scoop after dumping

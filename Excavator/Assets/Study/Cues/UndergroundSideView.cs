@@ -27,6 +27,7 @@ public class UndergroundSideView : MonoBehaviour
     public float halfSpan = 5F;          // section length on each side of the bucket (m)
     public float sectionDepth = 3.5F;    // how far below the original ground the section goes (m)
     public float behindBucket = 0.9F;    // section plane this far behind the bucket (seen from the camera)
+    public float overDigShow = 0.05F;    // C3: dug more than this below the target -> red in the section
     public float labelDistance = 0.6F;   // C3: "PIPE x m" tag only when the teeth are closer than this (or at warning)
     const int N = 60;
 
@@ -160,7 +161,11 @@ public class UndergroundSideView : MonoBehaviour
         for (int i = 0; i <= N; i++)
         {
             Vector3 p = o + reachDir * Mathf.Lerp(-halfSpan, halfSpan, i / (float)N);
-            float ry = TerrainDigger.ReferenceGroundHeight(p), cy = Mathf.Min(TerrainDigger.CurrentGroundHeight(p), ry);
+            // The ground profile is taken in the ARM'S plane (straight under the bucket, where it digs) and drawn
+            // on the section plane behind the bucket. Sampling the section plane itself (0.9 m to the side) missed
+            // the dug strip, so the trench did not appear in the cut-away although it was dug.
+            Vector3 ps = p - side * behindBucket;
+            float ry = TerrainDigger.ReferenceGroundHeight(ps), cy = Mathf.Min(TerrainDigger.CurrentGroundHeight(ps), ry);
             refPts[i] = new Vector3(p.x, ry, p.z);
             curPts[i] = new Vector3(p.x, cy, p.z);
             baseY = Mathf.Min(baseY, ry - sectionDepth);
@@ -182,6 +187,43 @@ public class UndergroundSideView : MonoBehaviour
                 tris.AddRange(new[] { v, v + 1, v + 2, v + 1, v + 3, v + 2 });
             }
         }
+        // C3: SOIL STILL TO DIG (like the "cut" of a grade-control system). Inside the dig area, the band between
+        // the current ground and the target depth is filled cyan (more opaque = deeper still to go), and soil
+        // removed below the target (over-dig) is filled red. Drawn last, so it lies over the soil and the gap.
+        if (Guidance)
+        {
+            float tgtDepth = TargetDepth;
+            Color toDigTop = CueKit.Alpha(CueKit.Guide, 0.35F), toDigBottom = CueKit.Alpha(CueKit.Guide, 0.7F);
+            Color overDig = CueKit.Alpha(CueKit.Danger, 0.6F);
+            Vector3 front = -side * 0.01F;   // a hair towards the camera, so it is not hidden in the soil quad
+            for (int i = 0; i < N; i++)
+            {
+                if (!Digger.Contains(refPts[i] - side * behindBucket, 0F) || !Digger.Contains(refPts[i + 1] - side * behindBucket, 0F)) continue;
+                float t0 = refPts[i].y - tgtDepth, t1 = refPts[i + 1].y - tgtDepth;
+                float c0 = curPts[i].y, c1 = curPts[i + 1].y;
+                if (c0 > t0 + 0.01F || c1 > t1 + 0.01F)   // soil left above the target
+                {
+                    int v = verts.Count;
+                    verts.Add(new Vector3(curPts[i].x, Mathf.Max(c0, t0), curPts[i].z) + front);
+                    verts.Add(new Vector3(curPts[i + 1].x, Mathf.Max(c1, t1), curPts[i + 1].z) + front);
+                    verts.Add(new Vector3(curPts[i].x, t0, curPts[i].z) + front);
+                    verts.Add(new Vector3(curPts[i + 1].x, t1, curPts[i + 1].z) + front);
+                    cols.Add(toDigTop); cols.Add(toDigTop); cols.Add(toDigBottom); cols.Add(toDigBottom);
+                    tris.AddRange(new[] { v, v + 1, v + 2, v + 1, v + 3, v + 2 });
+                }
+                if (c0 < t0 - overDigShow || c1 < t1 - overDigShow)   // dug below the target
+                {
+                    int v = verts.Count;
+                    verts.Add(new Vector3(curPts[i].x, t0, curPts[i].z) + front);
+                    verts.Add(new Vector3(curPts[i + 1].x, t1, curPts[i + 1].z) + front);
+                    verts.Add(new Vector3(curPts[i].x, Mathf.Min(c0, t0), curPts[i].z) + front);
+                    verts.Add(new Vector3(curPts[i + 1].x, Mathf.Min(c1, t1), curPts[i + 1].z) + front);
+                    cols.Add(overDig); cols.Add(overDig); cols.Add(overDig); cols.Add(overDig);
+                    tris.AddRange(new[] { v, v + 1, v + 2, v + 1, v + 3, v + 2 });
+                }
+            }
+        }
+
         mesh.Clear();
         mesh.SetVertices(verts);
         mesh.SetColors(cols);
@@ -195,7 +237,7 @@ public class UndergroundSideView : MonoBehaviour
         var tgt = new List<Vector3>();
         float target = TargetDepth;
         foreach (var p in refPts)
-            if (Digger.Contains(p, 0F)) tgt.Add(new Vector3(p.x, p.y - target, p.z));
+            if (Digger.Contains(p - side * behindBucket, 0F)) tgt.Add(new Vector3(p.x, p.y - target, p.z));
         if (tgt.Count >= 2 && Guidance) SetLine(targetLine, tgt.ToArray(), CueKit.Alpha(CueKit.Good, 0.9F)); else CueKit.Hide(targetLine);
 
         // --- buried services crossing the section plane ---
