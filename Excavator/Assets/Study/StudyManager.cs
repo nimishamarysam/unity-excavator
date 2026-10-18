@@ -303,5 +303,7 @@ public static class StudyBootstrap
         go.AddComponent<StudyLayout>();
         go.AddComponent<MeasurementBar>();
         go.AddComponent<ScenarioRunner>();
+        go.AddComponent<IncidentFeedback>();
+        go.AddComponent<AudioListenerKeeper>();   // one audio listener (avoids Unity's "no audio listeners" warning)
     }
 }

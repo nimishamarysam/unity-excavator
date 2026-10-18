@@ -57,8 +57,12 @@ public class StudyLogger : MonoBehaviour
     }
 
     // Call this from anywhere: StudyLogger.Log("hazard_onset", "worker_behind");
+    // Raised for every logged event (e.g. IncidentFeedback shows a warning when something goes wrong).
+    public static event Action<string, string> Logged;
+
     public static void Log(string eventName, string detail = "")
     {
+        Logged?.Invoke(eventName, detail);
         if (Instance == null || Instance.events == null) return;
         var sm = StudyManager.Instance;
         var t = sm != null ? sm.CurrentTrial : default;
