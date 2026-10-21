@@ -40,7 +40,7 @@ public class AttentionCues : MonoBehaviour
     public Scenario Scenario { get; private set; }
     public Transform WorldRoot { get; private set; }    // parent of all 3D cue objects
     public Transform CanvasRoot { get; private set; }   // parent of all driver-view cue objects
-    public Transform PanelCanvasRoot { get; private set; }   // labels inside the camera windows when those are on display 2
+    public Transform PanelCanvasRoot { get; private set; }   // labels inside the camera windows when those are on the camera monitor
 
     // The canvas on the same monitor as 'cam', so a label placed in that camera's window shows up there.
     public Transform CanvasFor(Camera cam) =>
@@ -79,7 +79,7 @@ public class AttentionCues : MonoBehaviour
         CanvasRoot = CueKit.MakeCanvas(transform, "CueCanvas", 42).transform;   // above the camera frames (40), below pop-up frames (45)
         if (StudyLayout.PanelDisplay != 0)
         {
-            var pc = CueKit.MakeCanvas(transform, "CueCanvas_Display2", 42);
+            var pc = CueKit.MakeCanvas(transform, "CueCanvas_CameraMonitor", 42);
             pc.targetDisplay = StudyLayout.PanelDisplay;
             PanelCanvasRoot = pc.transform;
         }

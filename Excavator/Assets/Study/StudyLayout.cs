@@ -21,16 +21,19 @@ using UnityEngine;
 // condition a bigger "windshield" than another.
 // All values are fractions of the screen (0..1), designed for a 16:9 screen.
 //
-// SECOND DISPLAY (lab setup, ContextViewsOnSecondDisplay = true):
+// SEPARATE CAMERA MONITOR (lab setup, ContextViewsOnSecondDisplay = true):
 //   Display 1: DRIVER VIEW over the full width + measurement bar.
-//   Display 2 (landscape): the camera windows SIDE BY SIDE, full height:
-//     +-----------+-----------+-----------+
+//   Display 5 (2560 x 1080): the camera windows SIDE BY SIDE in the TOP THIRD only
+//   (2560 x 360 px); the rest of that monitor stays black:
+//     +-----------+-----------+-----------+   <- top 360 px
 //     | camera 1  | camera 2  | camera 3  |
 //     +-----------+-----------+-----------+
-//   Driving scenario: bird's-eye (left half) | obstacle camera (right half).
-// In a build the second monitor is switched on automatically; if only one monitor is
-// connected it falls back to the single-screen layout above. In the Unity Editor, open a
-// second Game view (Window > General > Game), set it to "Display 2" and drag it to that monitor.
+//     |              (black)              |
+//     +-----------------------------------+
+//   Driving scenario: bird's-eye (left half) | obstacle camera (right half) of that strip.
+// In a build the monitor is switched on automatically; if it is not connected the
+// single-screen layout above is used. In the Unity Editor, open a second Game view
+// (Window > General > Game), set it to "Display 5" with a 2560x1080 resolution.
 // ---------------------------------------------------------------------------
 
 public class StudyLayout : MonoBehaviour
@@ -42,12 +45,17 @@ public class StudyLayout : MonoBehaviour
     // EXPERIMENT/LAB SWITCH: camera windows on a second monitor instead of the right-hand panel.
     public static bool ContextViewsOnSecondDisplay = true;
 
-    // True when the camera windows really go to display 2 (Editor: always, using a "Display 2" Game view).
+    // True when the camera windows really go to the camera monitor (Editor: always, using a "Display 5" Game view).
     public static bool SeparateDisplay =>
-        ContextViewsOnSecondDisplay && (Application.isEditor || Display.displays.Length > 1);
+        ContextViewsOnSecondDisplay && (Application.isEditor || Display.displays.Length > CameraMonitorIndex);
+
+    // Which monitor: Unity counts from 0, so "Display 5" in Windows/Unity's Game view = index 4.
+    public const int CameraMonitorIndex = 4;
+    // Part of that monitor used for the camera strip: top 360 of 1080 px.
+    public const float StripHeight = 360F / 1080F;
 
     // Unity display index for the camera windows and their frames/labels (0 = main monitor).
-    public static int PanelDisplay => SeparateDisplay ? 1 : 0;
+    public static int PanelDisplay => SeparateDisplay ? CameraMonitorIndex : 0;
 
     public static Rect DriverView => SeparateDisplay
         ? new Rect(0F, BarHeight, 1F, 1F - BarHeight)
@@ -65,9 +73,10 @@ public class StudyLayout : MonoBehaviour
     {
         if (SeparateDisplay)
         {
-            // Second monitor: windows side by side, slot 0 on the left, full height.
+            // Camera monitor: windows side by side in the top strip, slot 0 on the left.
             float sw = (1F - (count + 1) * Gap) / count;
-            return new Rect(Gap + i * (sw + Gap), Gap, sw, 1F - 2F * Gap);
+            float gy = Gap * 3F * StripHeight;   // vertical gap in the same pixel size as the horizontal one (2560 vs 1080 px)
+            return new Rect(Gap + i * (sw + Gap), 1F - StripHeight + gy, sw, StripHeight - 2F * gy);
         }
         float x = 1F - PanelWidth + Gap, w = PanelWidth - 2F * Gap;
         float h = (1F - BarHeight - (count + 1) * Gap) / count;
@@ -91,17 +100,17 @@ public class StudyLayout : MonoBehaviour
 
         if (SeparateDisplay)
         {
-            // Switch on the second monitor (only possible in a build; the Editor uses a "Display 2" Game view).
-            if (!Application.isEditor && Display.displays.Length > 1 && !Display.displays[1].active)
-                Display.displays[1].Activate();
-            var go2 = new GameObject("LayoutBackground_Display2");
+            // Switch on the camera monitor (only possible in a build; the Editor uses a "Display 5" Game view).
+            if (!Application.isEditor && Display.displays.Length > CameraMonitorIndex && !Display.displays[CameraMonitorIndex].active)
+                Display.displays[CameraMonitorIndex].Activate();
+            var go2 = new GameObject("LayoutBackground_CameraMonitor");
             go2.transform.SetParent(transform, false);
             var bg2 = go2.AddComponent<Camera>();
             bg2.depth = -100;
             bg2.clearFlags = CameraClearFlags.SolidColor;
-            bg2.backgroundColor = background.backgroundColor;
+            bg2.backgroundColor = Color.black;   // unused bottom two thirds stay black
             bg2.cullingMask = 0;
-            bg2.targetDisplay = 1;
+            bg2.targetDisplay = CameraMonitorIndex;
         }
     }
 

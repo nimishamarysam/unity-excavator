@@ -147,7 +147,7 @@ public class PopupViews : MonoBehaviour
         var canvas = p.frame.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 45;
-        // Docked obstacle camera lives in the camera panel -> on display 2 in the lab setup.
+        // Docked obstacle camera lives in the camera panel -> on the camera monitor (Display 5) in the lab setup.
         // Free pop-ups sit next to the object in the driver view -> main display.
         int disp = (docked || DockInPanel) ? StudyLayout.PanelDisplay : 0;
         p.cam.targetDisplay = disp;
