@@ -113,7 +113,17 @@ public class ExcavatorController : MonoBehaviour
     // The StudyManager turns this off so participants cannot trigger them by accident.
     public static bool AutonomousDemoEnabled = true;
 
-    // Where the controls come from (gamepad/keyboard today, real joysticks later).
+    // Where the controls come from. A flight stick (Thrustmaster TCA or WingMan) drives everything,
+    // and the F310 + keyboard keep working alongside it (see FlightStickInput.cs).
+    [Header("Flight stick")]
+    [Tooltip("Read a flight stick in addition to the F310 gamepad and keyboard.")]
+    public bool useFlightStick = true;
+    [Tooltip("Auto picks a Thrustmaster TCA if connected, otherwise a WingMan, otherwise any joystick.")]
+    public FlightStickChoice flightStick = FlightStickChoice.Auto;
+    [Tooltip("Auto: two sticks connected = gamepad-style two-stick layout, one stick = single-stick layout.")]
+    public StickLayout stickLayout = StickLayout.Auto;
+    [Tooltip("Show live stick values at the bottom of the screen (always shown while calibrating).")]
+    public bool showFlightStickDebug = true;
     private IExcavatorInput input = new GamepadKeyboardInput();
     public IExcavatorInput InputSource { get => input; set => input = value; }
 
@@ -144,6 +154,36 @@ public class ExcavatorController : MonoBehaviour
             travel = !travel;
             ModeIndicatorIcons.Apply(travelIndicator, operationIndicator, travel);   // green square + icon = active mode
         }
+    }
+
+    void Awake()
+    {
+        if (useFlightStick && input is GamepadKeyboardInput)
+        {
+            var combined = new GamepadAndStickInput();
+            combined.stick.choice = flightStick;
+            combined.layout = stickLayout;
+            input = combined;
+        }
+    }
+
+    GUIStyle stickStyle;
+
+    void OnGUI()
+    {
+        if (!(input is GamepadAndStickInput gi)) return;
+        if (!showFlightStickDebug && !gi.IsCalibrating) return;
+        GUI.depth = -1000; // bottom-centre, on top of the study panels
+        if (stickStyle == null)
+        {
+            stickStyle = new GUIStyle(GUI.skin.label) { fontSize = 18, wordWrap = true };
+            var bg = new Texture2D(1, 1); bg.SetPixel(0, 0, new Color(0F, 0F, 0F, 0.85F)); bg.Apply();
+            stickStyle.normal.background = bg;
+            stickStyle.padding = new RectOffset(12, 12, 8, 8);
+        }
+        stickStyle.normal.textColor = gi.IsCalibrating ? Color.yellow : Color.white;
+        float w = Mathf.Min(1000F, Screen.width - 20F), h = 170F;
+        GUI.Label(new Rect((Screen.width - w) / 2F, Screen.height - h - 10F, w, h), gi.DebugText(), stickStyle);
     }
 
     // Start is called before the first frame update
