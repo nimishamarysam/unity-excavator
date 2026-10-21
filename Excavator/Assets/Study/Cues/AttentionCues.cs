@@ -40,6 +40,11 @@ public class AttentionCues : MonoBehaviour
     public Scenario Scenario { get; private set; }
     public Transform WorldRoot { get; private set; }    // parent of all 3D cue objects
     public Transform CanvasRoot { get; private set; }   // parent of all driver-view cue objects
+    public Transform PanelCanvasRoot { get; private set; }   // labels inside the camera windows when those are on display 2
+
+    // The canvas on the same monitor as 'cam', so a label placed in that camera's window shows up there.
+    public Transform CanvasFor(Camera cam) =>
+        cam != null && cam.targetDisplay != 0 && PanelCanvasRoot != null ? PanelCanvasRoot : CanvasRoot;
     public Font Font { get; private set; }
     public ObstacleCues Obstacles { get; private set; }
     public DrivingCues Driving { get; private set; }
@@ -72,6 +77,12 @@ public class AttentionCues : MonoBehaviour
         w.transform.SetParent(transform, false);
         WorldRoot = w.transform;
         CanvasRoot = CueKit.MakeCanvas(transform, "CueCanvas", 42).transform;   // above the camera frames (40), below pop-up frames (45)
+        if (StudyLayout.PanelDisplay != 0)
+        {
+            var pc = CueKit.MakeCanvas(transform, "CueCanvas_Display2", 42);
+            pc.targetDisplay = StudyLayout.PanelDisplay;
+            PanelCanvasRoot = pc.transform;
+        }
 
         // The cab camera (and the machine's mirror/rear cameras) must not draw the context-only highlights.
         foreach (var cam in controller.Machine.transform.GetComponentsInChildren<Camera>(true))
@@ -88,6 +99,7 @@ public class AttentionCues : MonoBehaviour
 
         WorldRoot.gameObject.SetActive(false);
         CanvasRoot.gameObject.SetActive(false);
+        if (PanelCanvasRoot != null) PanelCanvasRoot.gameObject.SetActive(false);
     }
 
     void OnDestroy() { if (Instance == this) Instance = null; }
@@ -99,6 +111,7 @@ public class AttentionCues : MonoBehaviour
         wasVisible = v;
         WorldRoot.gameObject.SetActive(v);
         CanvasRoot.gameObject.SetActive(v);
+        if (PanelCanvasRoot != null) PanelCanvasRoot.gameObject.SetActive(v);
         StudyLogger.Log(v ? "cues_enabled" : "cues_disabled");
     }
 

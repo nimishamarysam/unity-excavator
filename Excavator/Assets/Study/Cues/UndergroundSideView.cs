@@ -292,6 +292,7 @@ public class UndergroundSideView : MonoBehaviour
     static void PlaceLabel(ScreenBox box, Camera cam, Vector3 world, string text, Color c)
     {
         if (cam == null) { box.Hide(); return; }
+        if (AttentionCues.Instance != null) box.MoveTo(AttentionCues.Instance.CanvasFor(cam));   // same monitor as the camera
         Vector3 vp = cam.WorldToViewportPoint(world);
         if (vp.z <= 0F || vp.x < 0F || vp.x > 1F || vp.y < 0F || vp.y > 1F) { box.Hide(); return; }
         Rect r = cam.rect;

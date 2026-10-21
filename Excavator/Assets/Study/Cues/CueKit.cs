@@ -287,5 +287,11 @@ public class ScreenBox
     }
 
     public void Hide() { if (root.activeSelf) root.SetActive(false); }
+
+    // Move to another canvas (e.g. the display-2 canvas when the label belongs to a camera window there).
+    public void MoveTo(Transform canvas)
+    {
+        if (canvas != null && root.transform.parent != canvas) root.transform.SetParent(canvas, false);
+    }
     public void Destroy() { if (root != null) Object.Destroy(root); }
 }

@@ -100,7 +100,7 @@ public class ContextViews : MonoBehaviour
             travelBirdsEye = MakeWindow("TravelTop", StudyLayout.PanelSlot(0, 2), 53);
             Show(travelBirdsEye, false);
             Rect mid = StudyLayout.PanelSlot(1), bottom = StudyLayout.PanelSlot(2);
-            sideTall = MakeWindow("SideTall", new Rect(bottom.xMin, bottom.yMin, bottom.width, mid.yMax - bottom.yMin), 54);
+            sideTall = MakeWindow("SideTall", StudyLayout.PanelSpan(mid, bottom), 54);
             Show(sideTall, false);
         }
     }
@@ -112,6 +112,7 @@ public class ContextViews : MonoBehaviour
         camGo.transform.SetParent(transform, false);
         w.cam = camGo.AddComponent<Camera>();
         w.cam.rect = r;
+        w.cam.targetDisplay = StudyLayout.PanelDisplay;   // second monitor in the lab setup
         w.cam.depth = depth;              // drawn on top of the operator's view
         w.cam.nearClipPlane = 0.2F;
         w.cam.cullingMask &= ~(1 << CueKit.DriverOnlyLayer);   // driver-view-only cues (teeth line)
@@ -121,6 +122,7 @@ public class ContextViews : MonoBehaviour
         w.frame.transform.SetParent(transform, false);
         var canvas = w.frame.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.targetDisplay = StudyLayout.PanelDisplay;   // frame + label on the same monitor as the camera
         canvas.sortingOrder = 40;
 
         float t = 3F;
