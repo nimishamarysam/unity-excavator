@@ -3,8 +3,10 @@ using UnityEngine.UI;
 
 // ---------------------------------------------------------------------------
 // DEPTH GAUGE  (C3, driver view, digging)  - replaces the floating "0.09 m deep (target 1.20)" text,
-// which covered the pit. A FIXED vertical gauge at the right edge of the driver view, like the grade
-// indicator of a machine-control system:
+// which covered the pit. A vertical gauge like the grade indicator of a machine-control system, placed
+// BESIDE the dig area (left of its far-left corner, pinned to the trench: it does not move with the arm),
+// so it is read without looking away from the work and does not cover the pit. Falls back to the right
+// edge of the driver view when that corner is not in view.
 //   - top line = original ground (0 m), scale downwards to target + 0.5 m;
 //   - GREEN band = target depth (from atGradeBelow above to overDigTolerance below the target);
 //     RED zone below it = too deep;
@@ -15,7 +17,7 @@ using UnityEngine.UI;
 
 public class DepthGauge
 {
-    const float W = 26F, H = 220F;
+    const float W = 22F, H = 160F;
     readonly GameObject root;
     readonly RectTransform rt, fill, band, red, pointer;
     readonly Image pointerImg;
@@ -64,12 +66,17 @@ public class DepthGauge
         return t;
     }
 
-    // view = the driver camera's rect. depth = teeth below the original ground (negative = above the ground).
-    public void Show(Rect view, float depth, float target, float atGradeBelow, float overDigTolerance)
+    // Fallback position: fixed at the right edge of the driver view.
+    public void Show(Rect view, float depth, float target, float atGradeBelow, float overDigTolerance) =>
+        ShowAt(new Vector2(view.xMax - 0.012F, view.yMin + 0.55F * view.height), new Vector2(1F, 0.5F), depth, target, atGradeBelow, overDigTolerance);
+
+    // At a screen point (0..1) with the given pivot, e.g. beside the dig area.
+    // depth = teeth below the original ground (negative = above the ground).
+    public void ShowAt(Vector2 p, Vector2 pivot, float depth, float target, float atGradeBelow, float overDigTolerance)
     {
         if (!root.activeSelf) root.SetActive(true);
-        rt.anchorMin = rt.anchorMax = new Vector2(view.xMax - 0.012F, view.yMin + 0.55F * view.height);
-        rt.pivot = new Vector2(1F, 0.5F);
+        rt.anchorMin = rt.anchorMax = p;
+        rt.pivot = pivot;
         rt.anchoredPosition = Vector2.zero;
 
         float max = target + 0.5F;

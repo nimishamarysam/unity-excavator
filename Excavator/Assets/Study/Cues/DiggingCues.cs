@@ -272,10 +272,33 @@ public class DiggingCues : MonoBehaviour
         if (root.Profile.heightArrowInDriverView && !overDump && m.OperatorCamera != null)
         {
             HideText(heightTextDriver);
-            depthGauge.Show(m.OperatorCamera.rect, refY - tip.y, TargetDepth, atGradeBelow, overDigTolerance);
+            PlaceDepthGauge(m.OperatorCamera, refY - tip.y);
         }
         else if (root.Profile.heightArrowInDriverView) { depthGauge.Hide(); PlaceText(heightTextDriver, m.OperatorCamera, (top + bottom) / 2F, driverTxt, c); }
         else { depthGauge.Hide(); HideText(heightTextDriver); }
+    }
+
+    // Depth gauge beside the dig area: its top-right corner just left of the area's far-left corner (as the
+    // operator sees it), kept inside the driver view. Fixed to the trench, so it does not move with the arm.
+    void PlaceDepthGauge(Camera cam, float depth)
+    {
+        var d = Digger;
+        Vector3 c = CueKit.Flat(d.ZoneCenter), u = d.ZoneAxisU;
+        Vector3 fwd = Vector3.Dot(CueKit.Flat(root.M.SwingCenter) - c, u) > 0F ? -u : u;
+        Vector3 left = -Vector3.Cross(Vector3.up, fwd);
+        Vector3 corner = c + fwd * d.ZoneHalfLength + left * d.ZoneHalfWidth;
+        corner.y = TerrainDigger.ReferenceGroundHeight(corner) + 0.3F;
+        Vector3 vp = cam.WorldToViewportPoint(corner);
+        Rect r = cam.rect;
+        if (vp.z <= 0F || vp.x < 0F || vp.x > 1F || vp.y < 0F || vp.y > 1F)
+        {
+            depthGauge.Show(r, depth, TargetDepth, atGradeBelow, overDigTolerance);
+            return;
+        }
+        float px = 1F / Mathf.Max(1F, Screen.width), py = 1F / Mathf.Max(1F, Screen.height);
+        float x = Mathf.Clamp(r.xMin + vp.x * r.width - 24F * px, r.xMin + 70F * px, r.xMax - 4F * px);   // room for the target value on the left
+        float y = Mathf.Clamp(r.yMin + vp.y * r.height, r.yMin + 190F * py, r.yMax - 8F * py);           // room for the gauge + number below
+        depthGauge.ShowAt(new Vector2(x, y), new Vector2(1F, 1F), depth, TargetDepth, atGradeBelow, overDigTolerance);
     }
 
     void HideHeightArrow()

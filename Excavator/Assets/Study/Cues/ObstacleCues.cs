@@ -72,9 +72,21 @@ public class ObstacleCues : MonoBehaviour
 
         // 1. Which hazards want a cue.
         wanted.Clear();
+        serviceKeys.Clear();
         foreach (var h in Hazard.All)
         {
             if (h == null || h is RectEdgeHazard) continue;   // trench edge: shown by the dig-area outline
+            // The same buried service registered more than once (seen in testing): cue it once, log it once.
+            if (IsBuried(h) && h is SegmentHazard sg)
+            {
+                string key = $"{h.kind}:{sg.a.x:F1},{sg.a.z:F1},{sg.b.x:F1},{sg.b.z:F1}";
+                if (!serviceKeys.Add(key))
+                {
+                    if (loggedDuplicates.Add(h))
+                        StudyLogger.Log("duplicate_hazard", $"{h.hazardId};object={h.name};scene={h.gameObject.scene.name};count_all={Hazard.All.Count}");
+                    continue;
+                }
+            }
             var t = Get(h);
             seen.Add(h);
             UpdateVelocity(t);
@@ -92,7 +104,7 @@ public class ObstacleCues : MonoBehaviour
         // 3. Show / hide.
         foreach (var h in Hazard.All)
         {
-            if (h == null || h is RectEdgeHazard) continue;
+            if (h == null || h is RectEdgeHazard || !seen.Contains(h)) continue;   // not seen = skipped duplicate
             var t = tracks[h];
             bool want = wanted.Contains(h);
             if (want != t.shown)
@@ -116,6 +128,8 @@ public class ObstacleCues : MonoBehaviour
 
     readonly List<Hazard> wanted = new List<Hazard>();
     int buriedSlot;   // buried-service widgets docked at a fixed place: stacking index this frame
+    readonly HashSet<string> serviceKeys = new HashSet<string>();
+    readonly HashSet<Hazard> loggedDuplicates = new HashSet<Hazard>();
 
     static float Urgency(Hazard h)
     {
@@ -371,7 +385,7 @@ public class ObstacleCues : MonoBehaviour
                 t.box.ShowBox(r, col, label);
             }
             else
-            {   // rectangle + proximity widget instead of written text; workers get an arrow for their walking direction
+            {   // rectangle + compact tag (direction arrow + distance) instead of written text
                 t.box.ShowFrame(r, col);
                 if (t.widget == null) t.widget = new ProximityWidget(root.CanvasRoot, root.Font, "CueProximity_" + h.hazardId);
                 float arrow = float.NaN;
@@ -382,8 +396,9 @@ public class ObstacleCues : MonoBehaviour
                     if (dv.sqrMagnitude > 1e-4F) arrow = Mathf.Atan2(dv.y, dv.x) * Mathf.Rad2Deg;
                 }
                 bool below = r.yMax > 0.93F;
-                t.widget.Show(new Vector2(r.xMin, below ? r.yMax - 0.005F : r.yMax + 0.003F), new Vector2(0F, below ? 1F : 0F),
-                              Name(h), col, h.CurrentDistance, Range(h), h.CurrentLevel == Hazard.Level.Contact, true, arrow);
+                // Visible obstacle: name + direction + distance (no bar).
+                t.widget.ShowCompact(new Vector2(r.xMin, below ? r.yMax - 0.005F : r.yMax + 0.003F), new Vector2(0F, below ? 1F : 0F),
+                                     col, Name(h), h.CurrentDistance, arrow);
             }
         }
         else if (cam != null && (root.Profile.edgeMarkersWorkersOnly ? IsDynamic(h)

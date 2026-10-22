@@ -88,6 +88,9 @@ public class ProximityWidget
                      bool showBar = true, float arrowDeg = float.NaN)
     {
         if (!root.activeSelf) root.SetActive(true);
+        name.gameObject.SetActive(true);
+        dist.rectTransform.anchoredPosition = new Vector2(145F, 0F);
+        arrowRt.anchoredPosition = new Vector2(Width + 10F, 0F);
         bool arrow = !float.IsNaN(arrowDeg) && showBar;
         rt.sizeDelta = new Vector2(showBar ? Width + (arrow ? 20F : 0F) : 66F, Height);
         arrowRt.gameObject.SetActive(arrow);
@@ -98,6 +101,7 @@ public class ProximityWidget
         rt.pivot = pivot;
         rt.anchoredPosition = Vector2.zero;
         name.text = label; name.color = new Color(labelCol.r, labelCol.g, labelCol.b, 1F);
+        dist.alignment = TextAnchor.MiddleRight;
         dist.text = $"{distance:0.0} m"; dist.color = Color.white;
         int lit = distance >= range ? 0 : Mathf.Clamp(Mathf.CeilToInt((1F - distance / range) * Segments), 1, Segments);
         float blink = contact ? CueKit.Pulse(10F, 0.25F) : 1F;
@@ -107,6 +111,32 @@ public class ProximityWidget
             if (i < lit) c.a = blink;
             seg[i].color = c;
         }
+    }
+
+    // COMPACT tag for VISIBLE obstacles: name, direction arrow (where it moves on screen, e.g. down = coming
+    // towards you; NaN = not moving) and distance, e.g. "WORKER v 3.1 m". No bar.
+    public void ShowCompact(Vector2 p, Vector2 pivot, Color col, string label, float distance, float arrowDeg)
+    {
+        if (!root.activeSelf) root.SetActive(true);
+        bool arrow = !float.IsNaN(arrowDeg);
+        name.gameObject.SetActive(true);
+        name.text = label;
+        float nameW = name.preferredWidth + 6F;   // width of the name text in pixels
+        foreach (var sg in seg) sg.gameObject.SetActive(false);
+        dist.gameObject.SetActive(true);
+        rt.anchorMin = rt.anchorMax = p;
+        rt.pivot = pivot;
+        rt.anchoredPosition = Vector2.zero;
+        float x = 6F + nameW;
+        rt.sizeDelta = new Vector2(x + (arrow ? 20F : 0F) + 46F, Height);
+        Color c = new Color(col.r, col.g, col.b, 1F);
+        name.color = c;
+        arrowRt.gameObject.SetActive(arrow);
+        arrowRt.anchoredPosition = new Vector2(x + 8F, 0F);
+        if (arrow) { arrowRt.localEulerAngles = new Vector3(0F, 0F, arrowDeg); arrowRt.GetComponent<Image>().color = c; }
+        dist.rectTransform.anchoredPosition = new Vector2(x + (arrow ? 20F : 0F), 0F);
+        dist.alignment = TextAnchor.MiddleLeft;
+        dist.text = $"{distance:0.0} m"; dist.color = c;
     }
 
     public void Hide() { if (root.activeSelf) root.SetActive(false); }
