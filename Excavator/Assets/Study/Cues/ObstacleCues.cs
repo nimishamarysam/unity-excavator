@@ -15,6 +15,16 @@ using UnityEngine;
 //
 // A cue appears when the object is closer than its cue distance (see Range) and disappears again
 // 0.5 m further away. Colour: yellow = in cue range, orange (blinking) = warning distance, red = contact.
+//
+// BURIED services (cable, pipe) use a DIFFERENT cue from visible obstacles, so they can't be mistaken for
+// an object standing on the ground. Visible obstacles have a rectangle (driver view) and a 3D box (context views).
+// Buried services have NO box: like a utility locate marking, a DASHED line is painted on the ground
+// directly above the service (on the dug trench floor too), in the service's marker colour (cable orange,
+// pipe yellow), with small arrows pointing DOWN into the ground. No written tag: a PROXIMITY WIDGET (parking
+// sensor bar, see ProximityWidget) "PIPE [#][#][#][ ][ ] 0.3 m" and a TETHER line from the bucket teeth to the
+// nearest point of the service show how close the bucket is. At warning / contact the marking turns orange / red.
+// Drawn in the driver view and the bird's-eye / bucket front views (not in the bucket side view, which shows
+// the services in its own section, see BucketSideServices).
 // ---------------------------------------------------------------------------
 
 public class ObstacleCues : MonoBehaviour
@@ -36,6 +46,9 @@ public class ObstacleCues : MonoBehaviour
         public Renderer[] renderers;
         public ScreenBox box;
         public LineRenderer wire, ring, motion, segment;
+        public readonly List<LineRenderer> marks = new List<LineRenderer>();   // buried: dashes + down arrows
+        public ProximityWidget widget;                                         // buried: parking-sensor bar
+        public LineRenderer tetherD, tetherC;                                  // buried: teeth -> service (driver / context)
         public bool shown;
         public Vector3 lastPos, vel;
         public bool hasLast;
@@ -54,6 +67,7 @@ public class ObstacleCues : MonoBehaviour
         bool visible = root.Visible;
         Camera cam = root.M.OperatorCamera;
         int[] edgeCount = new int[5];
+        buriedSlot = 0;
         seen.Clear();
 
         // 1. Which hazards want a cue.
@@ -101,6 +115,7 @@ public class ObstacleCues : MonoBehaviour
     }
 
     readonly List<Hazard> wanted = new List<Hazard>();
+    int buriedSlot;   // buried-service widgets docked at a fixed place: stacking index this frame
 
     static float Urgency(Hazard h)
     {
@@ -190,6 +205,102 @@ public class ObstacleCues : MonoBehaviour
         }
     }
 
+    static bool IsBuried(Hazard h) => h.kind == HazardKind.BuriedCable || h.kind == HazardKind.BuriedPipe;
+
+    public float markHalfLength = 4F;    // buried marking drawn this far each side of the point closest to the teeth (m)
+    public float dash = 0.4F, dashGap = 0.25F, arrowEvery = 1.5F;
+
+    LineRenderer Mark(Track t, int i)
+    {
+        while (t.marks.Count <= i)
+        {
+            // even = driver view copy, odd = context view copy (bird's-eye, bucket front view)
+            int layer = t.marks.Count % 2 == 0 ? CueKit.DriverOnlyLayer : CueKit.ContextOnlyLayer;
+            t.marks.Add(CueKit.Line(root.WorldRoot, "CueBuriedMark_" + t.h.hazardId, 0.12F, false, true, layer));
+        }
+        return t.marks[i];
+    }
+
+    // Buried service: dashed line on the ground above it + arrows pointing down + frameless tag.
+    void DrawBuried(Track t, Camera cam, int[] edgeCount)
+    {
+        var h = t.h;
+        var seg = (SegmentHazard)h;
+        Color baseCol = h.kind == HazardKind.BuriedCable ? WorldBuilder.Orange : WorldBuilder.Yellow;
+        Color col = h.CurrentLevel == Hazard.Level.Clear ? CueKit.Alpha(baseCol, 0.95F) : Severity(h);
+        CueKit.Hide(t.wire); CueKit.Hide(t.ring); CueKit.Hide(t.motion); CueKit.Hide(t.segment);
+
+        // Part of the service around the point closest to the teeth.
+        Vector3 a = seg.a, b = seg.b, ab = b - a;
+        float len = ab.magnitude;
+        if (len < 1e-3F) { HideTrack(t); return; }
+        Vector3 u = ab / len;
+        float s0 = Vector3.Dot(h.HazardPoint - a, u);
+        float from = Mathf.Max(0F, s0 - markHalfLength), to = Mathf.Min(len, s0 + markHalfLength);
+
+        int k = 0;
+        for (float s = from; s < to; s += dash + dashGap)
+        {
+            Vector3 p = CueKit.OnSurface(a + u * s, 0.06F), q = CueKit.OnSurface(a + u * Mathf.Min(to, s + dash), 0.06F);
+            for (int copy = 0; copy < 2; copy++)
+            {
+                var lr = Mark(t, k++);
+                lr.alignment = LineAlignment.TransformZ;
+                lr.widthMultiplier = 0.12F;
+                lr.loop = false; lr.positionCount = 2;
+                lr.SetPosition(0, p); lr.SetPosition(1, q);
+                CueKit.Paint(lr, col);
+            }
+        }
+        // Down arrows standing on the line: "it is under here".
+        Vector3 side = Vector3.Cross(Vector3.up, u);
+        for (float s = from + arrowEvery / 2F; s < to; s += arrowEvery)
+        {
+            Vector3 g = CueKit.OnSurface(a + u * s, 0.06F);
+            for (int copy = 0; copy < 2; copy++)
+            {
+                var lr = Mark(t, k++);
+                lr.alignment = LineAlignment.TransformZ;   // flat in the vertical plane across the service
+                lr.widthMultiplier = 0.05F;
+                lr.loop = false; lr.positionCount = 5;
+                lr.SetPosition(0, g + Vector3.up * 0.7F);
+                lr.SetPosition(1, g);
+                lr.SetPosition(2, g + Vector3.up * 0.2F + side * 0.12F);
+                lr.SetPosition(3, g);
+                lr.SetPosition(4, g + Vector3.up * 0.2F - side * 0.12F);
+                CueKit.Paint(lr, col);
+            }
+        }
+        for (int i = k; i < t.marks.Count; i++) CueKit.Hide(t.marks[i]);
+
+        // TETHER: a line from the bucket teeth to the nearest point of the service - its length IS the gap.
+        if (t.tetherD == null)
+        {
+            t.tetherD = CueKit.Line(root.WorldRoot, "CueBuriedTether_" + h.hazardId, 0.04F, true, false, CueKit.DriverOnlyLayer);
+            t.tetherC = CueKit.Line(root.WorldRoot, "CueBuriedTetherCtx_" + h.hazardId, 0.04F, true, false, CueKit.ContextOnlyLayer);
+        }
+        foreach (var lr in new[] { t.tetherD, t.tetherC })
+        {
+            lr.loop = false; lr.positionCount = 2;
+            lr.SetPosition(0, h.MachinePoint); lr.SetPosition(1, h.HazardPoint);
+            CueKit.Paint(lr, col);
+        }
+
+        // PROXIMITY WIDGET (parking sensor) instead of a written tag: "PIPE [#][#][#][ ][ ] 0.3 m".
+        if (t.widget == null) t.widget = new ProximityWidget(root.CanvasRoot, root.Font, "CueBuriedProximity_" + h.hazardId);
+        t.box.Hide();
+        // Docked at a FIXED place (bottom centre of the driver view, stacked), so it does not move with the bucket.
+        string what = h.kind == HazardKind.BuriedCable ? "CABLE" : "PIPE";
+        if (cam != null)
+        {
+            Rect r = cam.rect;
+            float y = r.yMin + 0.03F + buriedSlot++ * (ProximityWidget.Height + 4F) / Mathf.Max(1F, Screen.height);
+            t.widget.Show(new Vector2(r.center.x, y), new Vector2(0.5F, 0F), what, baseCol, h.CurrentDistance, Range(h),
+                          h.CurrentLevel == Hazard.Level.Contact);
+        }
+        else t.widget.Hide();
+    }
+
     static string Name(Hazard h)
     {
         switch (h.kind)
@@ -238,6 +349,7 @@ public class ObstacleCues : MonoBehaviour
     void Draw(Track t, Camera cam, int[] edgeCount)
     {
         var h = t.h;
+        if (IsBuried(h) && h is SegmentHazard) { DrawBuried(t, cam, edgeCount); return; }
         Bounds b = WorldBounds(t);
         Color col = Severity(h);
 
@@ -252,13 +364,40 @@ public class ObstacleCues : MonoBehaviour
 
         Vector3 centerVp = Vector3.zero;
         if (cam != null && CueKit.ProjectBox(cam, b, out Rect r, out centerVp))
-            t.box.ShowBox(r, col, label);
+        {
+            if (root.PassAdvice.ContainsKey(h))
+            {   // driving advice ("PASS ON THE LEFT") still needs words
+                if (t.widget != null) t.widget.Hide();
+                t.box.ShowBox(r, col, label);
+            }
+            else
+            {   // rectangle + proximity widget instead of written text; workers get an arrow for their walking direction
+                t.box.ShowFrame(r, col);
+                if (t.widget == null) t.widget = new ProximityWidget(root.CanvasRoot, root.Font, "CueProximity_" + h.hazardId);
+                float arrow = float.NaN;
+                if (IsDynamic(h) && root.Profile.workerMotionText && t.vel.magnitude > 0.25F)
+                {
+                    Vector3 p0 = cam.WorldToViewportPoint(b.center), p1 = cam.WorldToViewportPoint(b.center + t.vel.normalized);
+                    Vector2 dv = new Vector2((p1.x - p0.x) * cam.pixelWidth, (p1.y - p0.y) * cam.pixelHeight);
+                    if (dv.sqrMagnitude > 1e-4F) arrow = Mathf.Atan2(dv.y, dv.x) * Mathf.Rad2Deg;
+                }
+                bool below = r.yMax > 0.93F;
+                t.widget.Show(new Vector2(r.xMin, below ? r.yMax - 0.005F : r.yMax + 0.003F), new Vector2(0F, below ? 1F : 0F),
+                              Name(h), col, h.CurrentDistance, Range(h), h.CurrentLevel == Hazard.Level.Contact, true, arrow);
+            }
+        }
         else if (cam != null && (root.Profile.edgeMarkersWorkersOnly ? IsDynamic(h)
                                  : root.Profile.edgeMarkersForAll ? (IsDynamic(h) || h.CurrentLevel != Hazard.Level.Clear)
                                                                   : (IsDynamic(h) && h.CurrentLevel != Hazard.Level.Clear)))
+        {
+            if (t.widget != null) t.widget.Hide();
             EdgeMarker(t, cam, centerVp, col, $"{Name(h)}  {h.CurrentDistance:0.0} m", edgeCount);
+        }
         else
+        {
+            if (t.widget != null) t.widget.Hide();
             t.box.Hide();
+        }
 
         // --- context views: 3D highlight ---
         if (h is SegmentHazard seg)
@@ -337,5 +476,8 @@ public class ObstacleCues : MonoBehaviour
         CueKit.Hide(t.ring);
         CueKit.Hide(t.motion);
         CueKit.Hide(t.segment);
+        foreach (var m in t.marks) CueKit.Hide(m);
+        if (t.widget != null) t.widget.Hide();
+        if (t.tetherD != null) { CueKit.Hide(t.tetherD); CueKit.Hide(t.tetherC); }
     }
 }

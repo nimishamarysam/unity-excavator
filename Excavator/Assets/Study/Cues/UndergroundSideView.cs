@@ -5,7 +5,8 @@ using UnityEngine;
 // UNDERGROUND BUCKET SIDE VIEW  (C2 and C3, profile option bucketSideUnderground - Dig and dump)
 //
 // C2 gets the plain cut-away (soil section, trench, original ground line, buried services as grey circles).
-// C3 adds the guidance: target-depth line, warning colours on the services and the "PIPE x m from teeth" label.
+// C3 adds the guidance: target-depth line and warning colours on the services (the distance is shown by the
+// proximity widget of BucketSideServices).
 //
 // When the bucket goes into the pit, the BUCKET SIDE VIEW turns into a cut-away (section) view:
 //   - the terrain is hidden for that camera only, and the camera drops to the bucket's level;
@@ -272,10 +273,9 @@ public class UndergroundSideView : MonoBehaviour
             float dist = Mathf.Max(0F, Vector3.Distance(m.BucketTipPosition, q) - (h.kind == HazardKind.BuriedPipe ? 0.15F : 0.03F));   // to the pipe surface
             string name = h.kind == HazardKind.BuriedPipe ? "PIPE" : "CABLE";
             if (!Guidance) { serviceLabels[k].Hide(); k++; continue; }
-            // C3: the distance tag only when the teeth are getting close (the coloured ring says the rest).
-            if (dist < labelDistance || h.CurrentLevel != Hazard.Level.Clear)
-                PlaceLabel(serviceLabels[k], ContextViews.BucketSideCamera, q + reachDir * (rad + 0.08F), $"{name} {dist:0.00} m", c);
-            else serviceLabels[k].Hide();
+            // No text tag here any more: the proximity widget of BucketSideServices shows the distance
+            // (one cue per service in every view). The coloured ring stays.
+            serviceLabels[k].Hide();
             k++;
         }
         for (int j = k; j < serviceRings.Count; j++) { CueKit.Hide(serviceRings[j]); serviceLabels[j].Hide(); }

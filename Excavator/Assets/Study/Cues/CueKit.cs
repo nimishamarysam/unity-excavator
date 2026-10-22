@@ -248,9 +248,20 @@ public class ScreenBox
     }
 
     // Box around screen rect r (0..1 screen coordinates) with the label above its top-left corner.
+    // Only the rectangle, no text tag (a ProximityWidget is shown next to it instead).
+    public void ShowFrame(Rect r, Color c)
+    {
+        if (!root.activeSelf) root.SetActive(true);
+        box.anchorMin = r.min; box.anchorMax = r.max;
+        box.offsetMin = box.offsetMax = Vector2.zero;
+        foreach (var e in edges) { e.enabled = true; e.color = c; }
+        if (tag.gameObject.activeSelf) tag.gameObject.SetActive(false);
+    }
+
     public void ShowBox(Rect r, Color c, string label)
     {
         if (!root.activeSelf) root.SetActive(true);
+        if (!tag.gameObject.activeSelf) tag.gameObject.SetActive(true);
         box.anchorMin = r.min; box.anchorMax = r.max;
         box.offsetMin = box.offsetMax = Vector2.zero;
         foreach (var e in edges) { e.enabled = true; e.color = c; }
@@ -266,6 +277,7 @@ public class ScreenBox
     public void ShowTag(Vector2 p, Vector2 pivot, Color c, string label)
     {
         if (!root.activeSelf) root.SetActive(true);
+        if (!tag.gameObject.activeSelf) tag.gameObject.SetActive(true);
         box.anchorMin = box.anchorMax = p;
         box.offsetMin = box.offsetMax = Vector2.zero;
         foreach (var e in edges) e.enabled = false;

@@ -184,6 +184,8 @@ public class DrivingScenario : Scenario
 public class DiggingScenario : Scenario
 {
     const float TargetDepth = 1.2F;
+    const float TrenchWidth = 3F;             // was 2 m (bigger dig area)
+    const float TrenchLengthOfReach = 0.5F;   // trench length as a share of the max reach (was 0.43)
     const float SpoilSize = 2.5F;             // was 3.5 m
     const float SpoilMinGap = 5F;             // minimum distance between spoil square and trench edge
     const float SpoilSwingDeg = 120F;         // swing angle from the trench direction to the spoil square
@@ -245,17 +247,18 @@ public class DiggingScenario : Scenario
         M.EnableCuttingEdges(true);
         float reach = M.MaxReach;
 
-        trenchLen = 0.43F * reach;
+        trenchLen = TrenchLengthOfReach * reach;
         trench = Rel(0.635F * reach, 0);
-        TerrainDigger.Instance.SetZone(trench, f, trenchLen, 2F, TargetDepth + 0.6F);
-        Outline("trench", trench, f, trenchLen, 2F, BucketLoad.SoilMaterial().color);
+        float hw = TrenchWidth / 2F;
+        TerrainDigger.Instance.SetZone(trench, f, trenchLen, TrenchWidth, TargetDepth + 0.6F);
+        Outline("trench", trench, f, trenchLen, TrenchWidth, BucketLoad.SoilMaterial().color);
 
         // Work position box (where the machine should stand while digging).
         Outline("work", WorldBuilder.OnGround(workPos), f, 5.5F, 4.5F, WorldBuilder.Yellow);
 
         // Buried cable: parallel to the trench, 0.5-0.8 m outside its edge, 0.9 m deep. Side is random.
         side = Rng.NextDouble() < 0.5 ? 1F : -1F;
-        float offset = side * (1F + Rand(0.5F, 0.8F));
+        float offset = side * (hw + Rand(0.5F, 0.8F));
         Vector3 a = trench - f * (trenchLen / 2F + 2F) + r * offset, b = trench + f * (trenchLen / 2F + 2F) + r * offset;
         cable = new GameObject("BuriedCable").AddComponent<SegmentHazard>();
         cable.transform.SetParent(Root);
@@ -269,7 +272,7 @@ public class DiggingScenario : Scenario
 
         // Crossing service: a pipe across the trench, 0.25 m below the target depth, in the middle part of the trench.
         Vector3 cross = trench + f * Rand(-0.2F, 0.2F) * trenchLen;
-        Vector3 pa = cross - r * 2.5F, pb = cross + r * 2.5F;
+        Vector3 pa = cross - r * (hw + 1.5F), pb = cross + r * (hw + 1.5F);
         pipe = new GameObject("CrossingPipe").AddComponent<SegmentHazard>();
         pipe.transform.SetParent(Root);
         float pipeDepth = TargetDepth + PipeBelowTarget;
@@ -280,15 +283,15 @@ public class DiggingScenario : Scenario
         // Markers only OUTSIDE the trench (a mark across the hole would float in the air once dug).
         foreach (float sgn in new[] { -1F, 1F })
         {
-            Vector3 post = cross + r * sgn * 1.9F;
+            Vector3 post = cross + r * sgn * (hw + 0.9F);
             WorldBuilder.Shape(PrimitiveType.Cylinder, Root, "PipeMarker", post, new Vector3(0.12F, 0.55F, 0.12F), WorldBuilder.Yellow, 0, false);
-            WorldBuilder.GroundMark(Root, "PipeLine", WorldBuilder.OnGround(cross + r * sgn * 1.75F), 1.5F, 0.12F, 0F, WorldBuilder.Yellow);
+            WorldBuilder.GroundMark(Root, "PipeLine", WorldBuilder.OnGround(cross + r * sgn * (hw + 0.75F)), 1.5F, 0.12F, 0F, WorldBuilder.Yellow);
         }
 
         // Trench edge: warns when the TRACKS get close to the trench.
         var edge = new GameObject("TrenchEdge").AddComponent<RectEdgeHazard>();
         edge.transform.SetParent(Root);
-        edge.center = trench; edge.axisU = f; edge.halfU = trenchLen / 2F; edge.halfV = 1F;
+        edge.center = trench; edge.axisU = f; edge.halfU = trenchLen / 2F; edge.halfV = hw;
         edge.hazardId = "trench_edge"; edge.kind = HazardKind.TrenchEdge; edge.measure = HazardMeasure.TracksOnly;
         edge.warnDistance = 1.5F; edge.contactDistance = 0.3F;
 
@@ -309,7 +312,7 @@ public class DiggingScenario : Scenario
         StudyLogger.Log("layout", $"fixed={(FixedLayout ? 1 : 0)};reach={reach:F2};spoil_gap={GapToTrench(spoil, SpoilSize / 2F):F2};spoil_dist={(spoil - c0).magnitude:F2};pipe_depth={pipeDepth:F2};cable_side={side}");
 
         // Worker: hidden until the event.
-        Vector3 stand = trench + r * (-side) * 2F + f * Rand(-0.25F, 0.25F) * trenchLen;
+        Vector3 stand = trench + r * (-side) * (hw + 1F) + f * Rand(-0.25F, 0.25F) * trenchLen;
         worker = WorldBuilder.Worker(Root, "WorkerAtTrench", stand + r * (-side) * 12F + f * 4F);
         worker.Hide();
         Rng = trialRng;                                       // event timing varies per trial
@@ -337,7 +340,7 @@ public class DiggingScenario : Scenario
     {
         Vector3 d = p - trench;
         float du = Mathf.Abs(Vector3.Dot(d, f)) - (trenchLen / 2F + h);
-        float dv = Mathf.Abs(Vector3.Dot(d, r)) - (1F + h);
+        float dv = Mathf.Abs(Vector3.Dot(d, r)) - (TrenchWidth / 2F + h);
         return new Vector2(Mathf.Max(0F, du), Mathf.Max(0F, dv)).magnitude;
     }
 

@@ -142,11 +142,7 @@ public class ExcavatorController : MonoBehaviour
         if (modeChange)
         {
             travel = !travel;
-            float travelGreen = 0F;
-            float operationGreen = 0F;
-            if (travel) travelGreen = 1F; else operationGreen = 1F;
-            travelIndicator.color = new Color(0, travelGreen, 0);
-            operationIndicator.color = new Color(0, operationGreen, 0);
+            ModeIndicatorIcons.Apply(travelIndicator, operationIndicator, travel);   // green square + icon = active mode
         }
     }
 
@@ -157,8 +153,8 @@ public class ExcavatorController : MonoBehaviour
 
         travelIndicator = GameObject.FindWithTag("TravelIndicator").GetComponent<Image>();
         operationIndicator = GameObject.FindWithTag("OperationIndicator").GetComponent<Image>();
-        travelIndicator.color = new Color(0, 0, 0);
-        operationIndicator.color = new Color(0, 1F, 0);
+        ModeIndicatorIcons.Setup(travelIndicator, operationIndicator);   // TRAVEL (tracks) / DIG (bucket) icons
+        ModeIndicatorIcons.Apply(travelIndicator, operationIndicator, travel);
         float mass = gameObject.GetComponent<Rigidbody>().mass;
         driveParams = new DriveParams(mass, maxSpeed, creepSpeed, initialAccel, deltaAccel, maxAccel, deltaDirection);
 

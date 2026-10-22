@@ -81,7 +81,16 @@ public class ContextViews : MonoBehaviour
         public string labelText;
         public bool hasView, visible = true;
         public string slot;
+        public Image[] edges = new Image[4];
+        public Vector2[] edgeSize = new Vector2[4];
+        public bool alerted;
     }
+
+    // C3 lateral gauge (BucketSideLateralGauge): when set, the frame of the BUCKET SIDE VIEW is drawn in this
+    // colour and thicker, so drifting towards / out of the dig area is noticed without reading the gauge.
+    public static Color? BucketSideAlert;
+    public float alertFrameScale = 2.5F;
+    static readonly Color FrameColor = new Color(1, 1, 1, 0.9F);
 
     public void Init(ExcavatorController controller)
     {
@@ -124,10 +133,11 @@ public class ContextViews : MonoBehaviour
         canvas.sortingOrder = 40;
 
         float t = 3F;
-        Edge(w.frame, new Vector2(r.xMin, r.yMax), new Vector2(r.xMax, r.yMax), new Vector2(0, t), new Vector2(0, 0));
-        Edge(w.frame, new Vector2(r.xMin, r.yMin), new Vector2(r.xMax, r.yMin), new Vector2(0, t), new Vector2(0, 1));
-        Edge(w.frame, new Vector2(r.xMin, r.yMin), new Vector2(r.xMin, r.yMax), new Vector2(t, 0), new Vector2(1, 0));
-        Edge(w.frame, new Vector2(r.xMax, r.yMin), new Vector2(r.xMax, r.yMax), new Vector2(t, 0), new Vector2(0, 0));
+        w.edges[0] = Edge(w.frame, new Vector2(r.xMin, r.yMax), new Vector2(r.xMax, r.yMax), new Vector2(0, t), new Vector2(0, 0));
+        w.edges[1] = Edge(w.frame, new Vector2(r.xMin, r.yMin), new Vector2(r.xMax, r.yMin), new Vector2(0, t), new Vector2(0, 1));
+        w.edges[2] = Edge(w.frame, new Vector2(r.xMin, r.yMin), new Vector2(r.xMin, r.yMax), new Vector2(t, 0), new Vector2(1, 0));
+        w.edges[3] = Edge(w.frame, new Vector2(r.xMax, r.yMin), new Vector2(r.xMax, r.yMax), new Vector2(t, 0), new Vector2(0, 0));
+        for (int i = 0; i < 4; i++) w.edgeSize[i] = w.edges[i].rectTransform.sizeDelta;
 
         var tag = new GameObject("Label", typeof(RectTransform), typeof(Image));
         tag.transform.SetParent(w.frame.transform, false);
@@ -145,14 +155,31 @@ public class ContextViews : MonoBehaviour
         return w;
     }
 
-    static void Edge(GameObject parent, Vector2 a, Vector2 b, Vector2 size, Vector2 pivot)
+    static Image Edge(GameObject parent, Vector2 a, Vector2 b, Vector2 size, Vector2 pivot)
     {
         var go = new GameObject("Edge", typeof(RectTransform), typeof(Image));
         go.transform.SetParent(parent.transform, false);
         var rt = go.GetComponent<RectTransform>();
         rt.anchorMin = Vector2.Min(a, b); rt.anchorMax = Vector2.Max(a, b);
         rt.pivot = pivot; rt.sizeDelta = size;
-        go.GetComponent<Image>().color = new Color(1, 1, 1, 0.9F);
+        var img = go.GetComponent<Image>();
+        img.color = FrameColor;
+        return img;
+    }
+
+    // Frame alert of the BUCKET SIDE VIEW (see BucketSideAlert). Other windows keep the white frame.
+    void ApplyFrameAlert(Window w)
+    {
+        if (w == null) return;
+        bool on = BucketSideAlert.HasValue && w.visible && w.hasView && w.view == ContextView.BucketSide;
+        if (!on && !w.alerted) return;
+        for (int i = 0; i < 4; i++)
+        {
+            w.edges[i].color = on ? BucketSideAlert.Value : FrameColor;
+            w.edges[i].rectTransform.sizeDelta = on ? w.edgeSize[i] * alertFrameScale : w.edgeSize[i];
+        }
+        if (on != w.alerted) StudyLogger.Log("cue_side_frame_alert", (on ? "on;" : "off;") + w.slot);
+        w.alerted = on;
     }
 
     void OnDisable()
@@ -163,6 +190,8 @@ public class ContextViews : MonoBehaviour
 
     // ---- DIG PIT TOP VIEW: the machine (cab, boom, arm) is not drawn, only the bucket, so it does not hide the trench ----
     public bool hideMachineInPitView = true;
+    // BUCKET FRONT VIEW: the arm and boom would cover the picture, so only the bucket is drawn.
+    public bool hideMachineInIntoBucket = false;   // false: the arm is drawn, so the bucket does not look like it floats
     Renderer[] machineRenderers;
     readonly System.Collections.Generic.List<Renderer> hiddenForPit = new System.Collections.Generic.List<Renderer>();
 
@@ -170,7 +199,9 @@ public class ContextViews : MonoBehaviour
 
     void PitPreCull(Camera cam)
     {
-        if (!hideMachineInPitView || cam == null || cam != PitTopCamera || ctl == null || ctl.Machine == null) return;
+        if (cam == null || ctl == null || ctl.Machine == null) return;
+        bool hide = (hideMachineInPitView && cam == PitTopCamera) || (hideMachineInIntoBucket && cam == OverBucketCamera);
+        if (!hide) return;
         var m = ctl.Machine;
         if (machineRenderers == null) machineRenderers = m.transform.GetComponentsInChildren<Renderer>(true);
         Transform keep = m.BucketTransform;
@@ -182,7 +213,7 @@ public class ContextViews : MonoBehaviour
         }
     }
 
-    void PitPostRender(Camera cam) { if (cam == PitTopCamera) RestoreMachine(); }
+    void PitPostRender(Camera cam) { if (cam == PitTopCamera || cam == OverBucketCamera) RestoreMachine(); }
 
     void RestoreMachine()
     {
@@ -209,7 +240,7 @@ public class ContextViews : MonoBehaviour
         {
             case ContextView.Rear: return "REAR VIEW";
             case ContextView.BucketSide: return "BUCKET SIDE VIEW";
-            case ContextView.OverBucket: return "VIEW INTO BUCKET";
+            case ContextView.OverBucket: return "BUCKET FRONT VIEW";
             case ContextView.PitTop: return "DIG PIT (TOP VIEW)";
             case ContextView.LeftSide: return "LEFT SIDE";
             case ContextView.RightSide: return "RIGHT SIDE";
@@ -218,6 +249,15 @@ public class ContextViews : MonoBehaviour
     }
 
     void LateUpdate()
+    {
+        UpdateWindows();
+        if (slots == null) return;
+        foreach (var w in slots) ApplyFrameAlert(w);
+        ApplyFrameAlert(sideTall);
+        ApplyFrameAlert(travelBirdsEye);
+    }
+
+    void UpdateWindows()
     {
         // Windows are made in Init. After a script reload in Play mode (code saved while playing) they are lost:
         // do nothing until the next trial builds them again.
@@ -292,13 +332,14 @@ public class ContextViews : MonoBehaviour
         int sideOnly = 1 << CueKit.BucketSideOnlyLayer, ctxOnly = 1 << CueKit.ContextOnlyLayer;
         w.cam.cullingMask = v == ContextView.BucketSide ? ((w.cam.cullingMask | sideOnly) & ~ctxOnly)
                                                         : ((w.cam.cullingMask & ~sideOnly) | ctxOnly);
-        w.cam.fieldOfView = v == ContextView.OverBucket ? 55F : v == ContextView.BucketSide ? fieldOfView
+        w.cam.fieldOfView = v == ContextView.OverBucket ? intoBucketFieldOfView : v == ContextView.BucketSide ? fieldOfView
                           : v == ContextView.PitTop ? pitTopFieldOfView : wideFieldOfView;
         Pose(v, out Vector3 pos, out Vector3 lookAt);
-        if (switched) w.cam.transform.position = pos;   // jump straight to a new view (no camera flight)
+        if (switched || v == ContextView.OverBucket) w.cam.transform.position = pos;   // new view: jump; bucket front view: follows the bucket exactly
         else w.cam.transform.position = Vector3.Lerp(w.cam.transform.position, pos, 1F - Mathf.Exp(-followSpeed * Time.unscaledDeltaTime));
         Vector3 up = v == ContextView.BirdsEye ? ctl.Machine.ForwardFlat
-                   : v == ContextView.PitTop ? PitAxis() : Vector3.up;   // top-down: machine forward / trench long side is up
+                   : v == ContextView.PitTop ? PitAxis()
+                   : Vector3.up;   // top-down: machine forward / trench long side up
         w.cam.transform.rotation = Quaternion.LookRotation(lookAt - w.cam.transform.position, up);
         // Cut-away: clip everything closer to the camera than a thin slab in front of the bucket.
         float near = 0.2F;
@@ -329,10 +370,17 @@ public class ContextViews : MonoBehaviour
 
     // The camera currently showing the BUCKET SIDE VIEW (null if none). Used by the C3 overlays.
     public static Camera BucketSideCamera { get; private set; }
-    // The camera currently showing the VIEW INTO BUCKET (null if none). The C3 curl advice is shown there.
+    // The camera currently showing the BUCKET FRONT VIEW (null if none). The C3 curl advice is shown there.
     public static Camera OverBucketCamera { get; private set; }
     // The camera currently showing the DIG PIT TOP VIEW (null if none). The buried pipe/cable x-ray is drawn there.
     public static Camera PitTopCamera { get; private set; }
+
+    Vector3 ReachDir()
+    {
+        var m = ctl.Machine;
+        Vector3 d = (m.BucketPivotPosition + m.BucketTipPosition) / 2F - m.SwingCenter; d.y = 0F;
+        return d.sqrMagnitude > 0.01F ? d.normalized : m.ForwardFlat;
+    }
 
     Vector3 PitAxis()
     {
@@ -357,28 +405,42 @@ public class ContextViews : MonoBehaviour
     // so a worker or stakes between the camera and the bucket do not cover the section.
     public float cutAwaySlab = 1.2F;
 
-    // "View into bucket": a close camera that looks down into the bucket from a FIXED vantage point
-    // relative to the arm's working plane: above the bucket, a little towards the cab and to the right
-    // of the arm, so the arm does not cover the picture. It does not depend on how the bucket is rotated,
-    // so the perspective stays the same while the bucket curls or opens (it only follows the bucket's
-    // position, smoothly).
-    public float intoBucketDistance = 3.2F;
-    public float bucketSideDistance = 5F;     // bucket side view: distance from the bucket   // camera height-ish distance from the bucket (was 2.0)
-    public float intoBucketSideShift = 1.3F;  // to the right of the arm
+    // "BUCKET FRONT VIEW" (ContextView.OverBucket): a camera that FOLLOWS THE BUCKET from the DRIVER'S SIDE, at a
+    // FIXED distance (bucketFrontDistance from the bucket centre) and FIXED angles: bucketFrontElevation above the
+    // horizontal, and bucketFrontAzimuth to the right of the arm's plane (so the arm, which comes down from the
+    // machine side, does not cover the bucket). Looking at the bucket centre. Always the driver's side, whatever
+    // the bucket's curl. The image stays level. No smoothing. The arm is drawn (the bucket must not look like it floats).
+    public float bucketFrontDistance = 2.5F;      // metres from the bucket centre
+    public float bucketFrontAzimuth = 30F;        // degrees to the right of the arm's plane
+    public float bucketFrontElevation = 45F;      // degrees above the horizontal
+    public float intoBucketFieldOfView = 50F;     // bucket + arm end + ground below in view
+    public float bucketSideDistance = 5F;     // bucket side view: distance from the bucket
+
+    Renderer[] bucketRenderers;
+
+    // Centre of the bucket (all its renderers), the point the arm camera looks at.
+    Vector3 BucketCentre()
+    {
+        var m = ctl.Machine;
+        if (bucketRenderers == null && m.BucketTransform != null) bucketRenderers = m.BucketTransform.GetComponentsInChildren<Renderer>(true);
+        if (bucketRenderers == null || bucketRenderers.Length == 0) return (m.BucketPivotPosition + m.BucketTipPosition) / 2F;
+        Bounds b = bucketRenderers[0].bounds;
+        foreach (var r in bucketRenderers) if (r != null) b.Encapsulate(r.bounds);
+        return b.center;
+    }
 
     void IntoBucket(out Vector3 pos, out Vector3 lookAt)
     {
-        var m = ctl.Machine;
-        Vector3 piv = m.BucketPivotPosition, tip = m.BucketTipPosition;
-        Vector3 mid = (piv + tip) / 2F;
-        Vector3 reachDir = mid - m.SwingCenter; reachDir.y = 0F;
-        reachDir = reachDir.sqrMagnitude > 0.01F ? reachDir.normalized : m.ForwardFlat;
-        Vector3 side = Vector3.Cross(Vector3.up, reachDir);         // right of the arm, seen from the cab
-        // Fixed vantage relative to the arm plane: above the bucket, a little towards the cab and to the right
-        // of the arm (always above the bucket, so never inside the truck bed or the ground).
-        lookAt = mid;
-        pos = mid + Vector3.up * (0.8F * intoBucketDistance) - reachDir * (0.35F * intoBucketDistance) + side * intoBucketSideShift;
-        float ground = TerrainDigger.CurrentGroundHeight(pos) + 0.4F;
+        Vector3 centre = BucketCentre();
+        lookAt = centre;
+        Vector3 reach = ReachDir();
+        float el = bucketFrontElevation * Mathf.Deg2Rad;
+        float az = bucketFrontAzimuth * Mathf.Deg2Rad;
+        Vector3 right = Vector3.Cross(Vector3.up, reach);
+        Vector3 flat = -reach * Mathf.Cos(az) + right * Mathf.Sin(az);       // towards the machine, turned to the right
+        Vector3 dir = flat * Mathf.Cos(el) + Vector3.up * Mathf.Sin(el);
+        pos = centre + dir * bucketFrontDistance;
+        float ground = TerrainDigger.CurrentGroundHeight(pos) + 0.15F;   // never inside the ground
         if (pos.y < ground) pos.y = ground;
     }
 

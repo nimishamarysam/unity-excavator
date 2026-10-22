@@ -83,6 +83,8 @@ public class AttentionCues : MonoBehaviour
         Driving.Init(this);
         gameObject.AddComponent<DiggingCues>().Init(this);
         gameObject.AddComponent<UndergroundSideView>().Init(this);
+        gameObject.AddComponent<BucketSideServices>().Init(this);
+        gameObject.AddComponent<BucketSideLateralGauge>().Init(this);
         gameObject.AddComponent<BuriedServicesXray>().Init(this);
         gameObject.AddComponent<TruckProximityCue>().Init(this);
 
@@ -155,8 +157,9 @@ public class CueProfile
     public bool bucketSideHeightArrow = false;            // vertical arrow + height/depth in the BUCKET SIDE VIEW
     public bool bucketSideAngleLabel = false;             // current bucket angle next to the bucket in that view
     public bool heightArrowInDriverView = false;          // the height arrow (and its label) also in the driver view
-    public bool intoBucketXray = false;                   // buried pipe/cable drawn through the ground in the VIEW INTO BUCKET (C2 + C3)
+    public bool intoBucketXray = false;                   // buried pipe/cable drawn through the ground in the BUCKET FRONT VIEW (C2 + C3)
     public bool bucketSideUnderground = false;            // bucket side view becomes an underground cut-away in the pit (C2 + C3)
+    public bool bucketSideLateralGauge = false;           // C3: sideways (swing) position bar + frame alert in the bucket side view
 
     public static CueProfile For(StudyScenario s)
     {
@@ -185,6 +188,7 @@ public class CueProfile
                     bucketSideHeightArrow = true,
                     bucketSideAngleLabel = true, heightArrowInDriverView = true,
                     bucketSideUnderground = true,   // cut-away bucket side view in the trench (C2 + C3)
+                    bucketSideLateralGauge = true,  // sideways position bar + frame alert in the bucket side view (C3)
                     intoBucketXray = true,          // pipe + cable through the ground in the view into the bucket (C2 + C3)
                     groundRing = false, pathEndRing = false,
                 };
@@ -203,6 +207,7 @@ public class CueProfile
                     trajectory = false,   // no suggested bucket path in Dig and dump (too much in the bucket side view)
                     bucketSideHeightArrow = true,
                     truckWallProximity = true, heightArrowInDriverView = true, bucketSideUnderground = true,
+                    bucketSideLateralGauge = true,
                 };
             default:
                 return new CueProfile();

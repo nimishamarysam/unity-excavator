@@ -4,8 +4,7 @@ using UnityEngine;
 // ---------------------------------------------------------------------------
 // BURIED SERVICES X-RAY in the DIG PIT TOP VIEW  (C2 and C3, profile option intoBucketXray - Digging)
 // The buried pipe and cable are drawn THROUGH the ground, but only by the camera that shows the
-// DIG PIT TOP VIEW (switched per camera in Camera.onPreCull; falls back to the view into the bucket in
-// scenarios without the pit view), so the operator sees where they run below the trench and the bucket. Plain lines in the services' own colours: water pipe blue (as thick as the pipe),
+// DIG PIT TOP VIEW (switched per camera in Camera.onPreCull), so the operator sees where they run below the trench and the bucket. Plain lines in the services' own colours: water pipe blue (as thick as the pipe),
 // cable orange (as its markers). No distances and no warning colours - it is the same in C2 and C3.
 // Logged as view_xray on / off.
 // ---------------------------------------------------------------------------
@@ -34,7 +33,8 @@ public class BuriedServicesXray : MonoBehaviour
     void PreCull(Camera cam)
     {
         if (cam == null) return;
-        Camera target = ContextViews.PitTopCamera != null ? ContextViews.PitTopCamera : ContextViews.OverBucketCamera;
+        // Only the dig pit top view. (The BUCKET FRONT VIEW is a close camera that shows only the bucket.)
+        Camera target = ContextViews.PitTopCamera;
         bool on = shown && cam == target;
         foreach (var lr in lines.Values) if (lr != null) lr.enabled = on;
     }
