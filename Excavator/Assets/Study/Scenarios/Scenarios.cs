@@ -169,7 +169,7 @@ public class DrivingScenario : Scenario
     }
 }
 
-// MODERATE - DIGGING: drive to the work position, dig a trench to 1.2 m, dump spoil on the white square.
+// MODERATE - DIGGING: drive to the work position, dig a trench to 1.6 m (TargetDepth), dump spoil on the white square.
 // Task demands:
 //   - Some driving: the machine starts 9 m behind the work position (yellow box) and must drive there first.
 //   - Strict spoil placement: small spoil square (2.5 m) at least 5 m from the trench edge, about 120 degrees
@@ -183,9 +183,15 @@ public class DrivingScenario : Scenario
 // Hazards also logged by the HazardTracker: over-digging, cable, pipe, trench edge (tracks), worker.
 public class DiggingScenario : Scenario
 {
-    const float TargetDepth = 1.2F;
+    const float TargetDepth = 1.6F;               // was 1.2 m (deeper trench); pipe stays PipeBelowTarget below it
     const float TrenchWidth = 3F;             // was 2 m (bigger dig area)
-    const float TrenchLengthOfReach = 0.5F;   // trench length as a share of the max reach (was 0.43)
+    // Trench position and length as shares of the max reach, measured from the WORK position. Fitted to the machine's
+    // DIG ENVELOPE at the target depth (pilot 2026-10-22, reach 10.1 m): the teeth reach 2.5+ m deep from 3 to 6 m
+    // from the swing centre, 2.0 m at 6.5 m, but only ~1 m at 7 m and beyond. The trench therefore runs from ~3.5 m
+    // to ~6.6 m from the swing centre (a margin for stopping up to 1.2 m off the work position). Was centre 0.635 /
+    // length 0.5 (to ~8.5 m): the far end could not be dug to depth and progress stopped around 79 %.
+    const float TrenchCentreOfReach = 0.54F;
+    const float TrenchLengthOfReach = 0.31F;
     const float SpoilSize = 2.5F;             // was 3.5 m
     const float SpoilMinGap = 5F;             // minimum distance between spoil square and trench edge
     const float SpoilSwingDeg = 120F;         // swing angle from the trench direction to the spoil square
@@ -248,7 +254,7 @@ public class DiggingScenario : Scenario
         float reach = M.MaxReach;
 
         trenchLen = TrenchLengthOfReach * reach;
-        trench = Rel(0.635F * reach, 0);
+        trench = Rel(TrenchCentreOfReach * reach, 0);
         float hw = TrenchWidth / 2F;
         TerrainDigger.Instance.SetZone(trench, f, trenchLen, TrenchWidth, TargetDepth + 0.6F);
         Outline("trench", trench, f, trenchLen, TrenchWidth, BucketLoad.SoilMaterial().color);
@@ -334,6 +340,14 @@ public class DiggingScenario : Scenario
     }
 
     Vector3 workerStand;
+    readonly System.Collections.Generic.SortedDictionary<int, float> tipMaxByDist = new System.Collections.Generic.SortedDictionary<int, float>();
+
+    string TipEnvelope()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var kv in tipMaxByDist) { if (sb.Length > 0) sb.Append(' '); sb.Append($"{kv.Key * 0.5F:F1}:{kv.Value:F2}"); }
+        return sb.ToString();
+    }
 
     // Distance from a square (centre p, half size h, aligned with the trench) to the trench rectangle.
     float GapToTrench(Vector3 p, float h)
@@ -363,7 +377,11 @@ public class DiggingScenario : Scenario
         if (TerrainDigger.Instance.Contains(tip))
         {
             maxDepth = Mathf.Max(maxDepth, depth);
-            if (overDigArmed && depth > TargetDepth + 0.35F) { overDigs++; overDigArmed = false; StudyLogger.Log("over_dig", $"depth={depth:F2}"); }
+            // Diagnostic: deepest the teeth reached per 0.5 m of distance from the swing centre (reach envelope).
+            float rad = new Vector2(tip.x - M.SwingCenter.x, tip.z - M.SwingCenter.z).magnitude;
+            int bin = Mathf.FloorToInt(rad / 0.5F);
+            if (!tipMaxByDist.TryGetValue(bin, out float prev) || depth > prev) tipMaxByDist[bin] = depth;
+            if (overDigArmed && depth > TargetDepth + OverDigTolerance) { overDigs++; overDigArmed = false; StudyLogger.Log("over_dig", $"depth={depth:F2}"); }
         }
         if (depth < 0F) overDigArmed = true;
 
@@ -430,7 +448,9 @@ public class DiggingScenario : Scenario
     public override string Summary() =>
         $"progress={TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance):F2};dug={TerrainDigger.Instance.FractionDugTo(TargetDepth):F2};scoops={load.Scoops};spoil_dumps={spoilDumps};spills={spills};" +
         $"too_close={tooClose};over_digs={overDigs};max_depth={maxDepth:F2};pipe_strikes={pipeStrikes};cable_strikes={cableStrikes};" +
-        $"bucket_over_worker={bucketOverWorker};swing_toward_worker={swingTowardWorker};arrived={(arrived ? 1 : 0)}";
+        $"bucket_over_worker={bucketOverWorker};swing_toward_worker={swingTowardWorker};arrived={(arrived ? 1 : 0)};" +
+        // Diagnostic: how deep each row of the trench got, near end -> far end ("distance from swing centre : mean/min depth").
+        $"reach={M.MaxReach:F2};rows={TerrainDigger.Instance.DepthProfile(M.SwingCenter)};tip_max={TipEnvelope()}";
 }
 
 // HARD - DIG AND DUMP: load the truck 4 times before time runs out (6 minutes).

@@ -28,7 +28,7 @@ public class UndergroundSideView : MonoBehaviour
     public float halfSpan = 5F;          // section length on each side of the bucket (m)
     public float sectionDepth = 3.5F;    // how far below the original ground the section goes (m)
     public float behindBucket = 0.9F;    // section plane this far behind the bucket (seen from the camera)
-    public float overDigShow = 0.05F;    // C3: dug more than this below the target -> red in the section
+    public float overDigShow = 0.15F;    // C3: dug more than this below the target -> red in the section (= Scenario.OverDigTolerance)
     public float labelDistance = 0.6F;   // C3: "PIPE x m" tag only when the teeth are closer than this (or at warning)
     const int N = 60;
 
@@ -55,6 +55,7 @@ public class UndergroundSideView : MonoBehaviour
     public void Init(AttentionCues r)
     {
         root = r;
+        if (r.Scenario != null) overDigShow = r.Scenario.OverDigTolerance;
         int layer = CueKit.BucketSideOnlyLayer;
         own = new GameObject("UndergroundSideView").transform;
         own.SetParent(transform, false);

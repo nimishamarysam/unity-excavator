@@ -301,6 +301,31 @@ public class TerrainDigger : MonoBehaviour
         return total == 0 ? 0F : sum / total;
     }
 
+    // DIAGNOSTIC: dug depth per 0.5 m row ACROSS the zone, from the end nearest 'from' to the far end.
+    // Each entry "dist:mean/min" = distance of the row from 'from' (m) : mean / smallest dug depth in that row (m).
+    // Shows which part of the zone could not be dug to depth (e.g. out of reach at the far end, too close at the near end).
+    public string DepthProfile(Vector3 from)
+    {
+        if (!hasZone) return "";
+        var sb = new System.Text.StringBuilder();
+        float sign = Vector3.Dot(new Vector3(from.x - center.x, 0F, from.z - center.z), axisU) > 0F ? -1F : 1F;   // near -> far
+        for (float s = -halfU + 0.25F; s <= halfU - 0.25F; s += 0.5F)
+        {
+            float u = sign * s, sum = 0F, min = float.MaxValue; int n = 0;
+            for (float v = -halfV + 0.25F; v <= halfV - 0.25F; v += 0.5F)
+            {
+                Vector3 p = center + axisU * u + axisV * v;
+                float d = ReferenceGroundHeight(p) - CurrentGroundHeight(p);
+                sum += d; min = Mathf.Min(min, d); n++;
+            }
+            Vector3 rowC = center + axisU * u;
+            float dist = new Vector2(rowC.x - from.x, rowC.z - from.z).magnitude;
+            if (sb.Length > 0) sb.Append(' ');
+            sb.Append($"{dist:F1}:{sum / Mathf.Max(1, n):F2}/{min:F2}");
+        }
+        return sb.ToString();
+    }
+
     // Share of the zone (0..1) that has been dug at least to the given depth.
     public float FractionDugTo(float depth, float tolerance = 0.15F)
     {

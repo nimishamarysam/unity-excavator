@@ -40,6 +40,10 @@ public abstract class Scenario : MonoBehaviour
     // (null = use the zone's maximum depth).
     public virtual float? DigTargetDepth => null;
 
+    // Deeper than the target by more than this = over-dig. ONE value for the scored incident AND the cues
+    // (red depth arrow / teeth line / depth gauge / red cut-away shading), so what turns red is what counts.
+    public virtual float OverDigTolerance => 0.15F;
+
     // Time limit of this scenario in seconds (null = StudyManager.trialDurationSeconds).
     public virtual float? TimeLimitSeconds => null;
 
@@ -163,7 +167,27 @@ public class ScenarioRunner : MonoBehaviour
         StudyManager.TrialEnded -= OnTrialEnded;
     }
 
-    void OnTrialStarted(TrialInfo trial) => StartCoroutine(Build(trial));
+    // A trial can end before its scenario was built (e.g. skipped right after the start). The waiting build must
+    // NOT continue into the next trial's scene: that left two or three scenarios alive at once (each with its own
+    // bucket load, digging and cues: doubled log events, stacked cues, bucket load 0 % while soil was dug).
+    void OnTrialStarted(TrialInfo trial)
+    {
+        StopAllCoroutines();   // cancel a build that is still waiting for an earlier trial
+        RemoveScenarios();
+        StartCoroutine(Build(trial));
+    }
+
+    // Removes every scenario object that is still alive (normally none: the scene reload destroys them).
+    void RemoveScenarios()
+    {
+        foreach (var sc in FindObjectsByType<Scenario>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            StudyLogger.Log("scenario_removed", sc.gameObject.name);
+            Destroy(sc.gameObject);
+        }
+        current = null;
+        Current = null;
+    }
 
     IEnumerator Build(TrialInfo trial)
     {
@@ -171,6 +195,8 @@ public class ScenarioRunner : MonoBehaviour
         // Wait until the excavator has finished its own start-up after the scene reload.
         while (sm.Controller == null || sm.Controller.Machine == null) yield return null;
         yield return new WaitForFixedUpdate();
+        // The trial may have ended (or the next one started) while waiting: then build nothing.
+        if (!sm.IsTrialRunning || sm.CurrentTrial.index != trial.index) yield break;
 
         var go = new GameObject("Scenario_" + trial.scenario);
         go.AddComponent<TerrainDigger>();
@@ -194,6 +220,7 @@ public class ScenarioRunner : MonoBehaviour
 
     void OnTrialEnded(TrialInfo trial, string reason)
     {
+        StopAllCoroutines();   // a build still waiting for this trial must not run later
         if (current != null) StudyLogger.Log("scenario_summary", current.Summary());
     }
 

@@ -41,10 +41,11 @@ using UnityEngine;
 public class DiggingCues : MonoBehaviour
 {
     public float cutDepthPerPass = 0.45F;
-    // Depth colours (height arrow + teeth line): GREEN only from atGradeBelow above the target down to
-    // overDigTolerance below it; deeper = RED "too deep" (was +0.25 m, which showed 1.33 m green for a 1.20 m target).
+    // Depth colours (height arrow + teeth line + depth gauge): GREEN only from atGradeBelow above the target down to
+    // overDigTolerance below it; deeper = RED "too deep". overDigTolerance is taken from the scenario in Init
+    // (Scenario.OverDigTolerance), the same value that scores the over-dig incident.
     public float atGradeBelow = 0.10F;
-    public float overDigTolerance = 0.05F;
+    public float overDigTolerance = 0.15F;
     public float dragLength = 1.6F;
     public float replanSeconds = 0.6F;
     public float reachFraction = 0.85F;   // do not plan scoops further out than this share of max reach
@@ -88,6 +89,7 @@ public class DiggingCues : MonoBehaviour
     {
         root = r;
         load = r.Scenario != null ? r.Scenario.GetComponent<BucketLoad>() : null;
+        if (r.Scenario != null) overDigTolerance = r.Scenario.OverDigTolerance;
         var w = r.WorldRoot;
         boundary  = CueKit.Line(w, "CueDigBoundary", 0.14F, false, true);
         ring      = CueKit.Line(w, "CueTeethRing", 0.07F, true, true);
