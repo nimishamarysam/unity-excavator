@@ -1,0 +1,656 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+// ---------------------------------------------------------------------------
+// PRACTICE GUIDE (the whole practice trial, in three phases)
+//
+// PHASE 1 - BASIC CONTROLS (one control at a time)
+//    1  switch to DRIVE mode (B)
+//    2  drive forward              3  drive backward
+//    4  turn left  (forward)       5  turn right (forward)
+//    6  turn right (backward)      7  turn left  (backward)
+//    8  switch to DIG mode (B)
+//    9  boom down    10 boom up     11 arm out      12 arm in
+//   13 bucket open  14 bucket curl  15 swing left   16 swing right
+//   17-19 info pages: task panel, status bar, incidents (screen part outlined in yellow, A to continue)
+//
+// PHASE 2 - DIGGING AND DUMPING (short tasks, checked automatically)
+//   No marked areas: when phase 2 starts, digging is switched on all around the machine
+//   (PracticeScenario.BuildDigSite), so the participant can dig anywhere and dump anywhere.
+//   Steps: teeth into the ground -> scoop -> lift the soil out -> swing anywhere and dump -> one more on your own.
+//   If the soil falls out on the way, the guide goes back to the right step and says why.
+//
+// PHASE 3 - FREE PRACTICE (no guide)
+//   The participant practises on their own and HOLDS A for HoldAToContinue seconds when ready
+//   (ends the practice: "participant_ready"), or the practice ends after StudyManager.practiceDurationSeconds.
+//
+// A control step (phase 1) counts as learned when the CORRECT control has been held for HoldFor(step) seconds
+// in total - it does not have to be in one go. Wrong-mode or wrong-stick input is not counted.
+// The instructions are drawn in the right-hand camera panel (empty in the practice trial, which runs in C1).
+//
+// Experimenter: gamepad Select/Back or keyboard N = skip the current step (logged).
+// Logged events: guide_step_start, guide_step_done (took / held / wrong-input seconds), guide_step_skipped,
+//                guide_step_back (phase 2: soil lost), guide_complete, practice_ready.
+// ---------------------------------------------------------------------------
+
+public class PracticeGuide : MonoBehaviour
+{
+    public static bool Enabled = true;            // false = old practice (free practice only)
+    public static float HoldSeconds = 2F;         // DEFAULT correct input needed per control step
+
+    // HOLD TIME PER STEP (seconds). Steps listed here use this time instead of HoldSeconds.
+    // Change a number to shorten/lengthen one step; remove a line to use the default again.
+    // Step names: drive_fwd, drive_back, turn_left_fwd, turn_right_fwd, turn_right_back, turn_left_back,
+    //             boom_down, boom_up, arm_out, arm_in, bucket_curl, bucket_open, swing_left, swing_right
+    // The digging joints move fast (boom ~18 deg/s, arm ~30 deg/s, bucket ~45 deg/s), so they get shorter times.
+    public static readonly Dictionary<string, float> HoldPerStep = new Dictionary<string, float>
+    {
+        { "boom_down",   1.5F },
+        { "boom_up",     2F },
+        { "arm_out",     2F },
+        { "arm_in",      3F },
+        { "bucket_curl", 1.5F },
+        { "bucket_open", 1.5F },
+    };
+
+    public static float HoldFor(string stepId) => HoldPerStep.TryGetValue(stepId, out float t) ? t : HoldSeconds;
+    public static float HoldAToContinue = 1.5F;   // phase 3: hold A this long to finish the practice
+    const float InfoMinSeconds = 3F;              // info pages: A works only after this many seconds
+    const float TaskConfirmSeconds = 0.3F;        // phase 2: condition must be true this long (no flicker)
+    const float HintGraceSeconds = 1.5F;          // no "not quite" / wrong-mode hint (and no wrong-input time) in the
+                                                  // first seconds of a step: time to release the old control
+    const float WrongBeforeHint = 0.5F;           // wrong input must last this long before the hint appears
+    const float GuideMaxSeconds = 1200F;          // safety cap: after 20 min the guide ends anyway
+    const float StickOn = 0.5F;                   // stick deflection that counts as "pushed"
+    const float TrackDiff = 0.35F;                // difference between the two tracks for a turn / allowed for straight
+
+    public static PracticeGuide Current { get; private set; }
+    public bool Done { get; private set; }        // phases 1 and 2 finished -> free practice (phase 3)
+    public float DoneAt { get; private set; }     // trial time when phase 3 started
+    public int Phase => Done ? 3 : steps[index].phase;
+    public static string PhaseName(int p) => p == 1 ? "Basic controls" : p == 2 ? "Digging and dumping" : "Free practice";
+
+    enum Kind { ModeDrive, ModeDig, Drive, Dig, Info, Task }
+    enum Area { None, TaskPanel, StatusBar, Incidents }   // screen part outlined by an info page
+
+    class Step
+    {
+        public string id, title, how, keys;
+        public int phase = 1;
+        public Kind kind;
+        public Area area;
+        public Vector2 targetL, targetR;          // target stick positions for the diagrams (-1..1)
+        public Func<InputSnapshot, bool> ok;      // control steps: is the current input the correct one?
+        public Func<bool> done;                   // task steps: is the task done?
+        public Func<string> status;               // task steps: live value line (may be null)
+        public Func<string> hint;                 // task steps: contextual hint (may be null / return "")
+        public Func<bool> lost;                   // task steps: soil lost -> go back to 'backTo'
+        public string backTo, lostText;
+        public Action onStart;
+        public float held, wrong, startedAt;
+    }
+
+    readonly List<Step> steps = new List<Step>();
+    int index;
+    ExcavatorController ctl;
+    PracticeScenario site;
+    StudyManager SM => StudyManager.Instance;
+    int trialIndex;
+    bool lastOk;
+    float wrongStreak;                            // seconds of continuous wrong input (for the hint delay)
+    string backMessage = ""; float backMessageUntil = -1F;
+    int dumpsAtStepStart;
+    int dumpsAtCycleStart;                        // phase 2: dumps when the guided dig cycle (dig_over) started
+    float holdA;
+
+    GUIStyle small, title, body, hint, center, bigCenter;
+
+    public void Init(ExcavatorController controller, PracticeScenario scenario)
+    {
+        ctl = controller;
+        site = scenario;
+        trialIndex = SM.CurrentTrial.index;
+        Current = this;
+        BuildSteps();
+        StartStep();
+    }
+
+    void OnDestroy() { if (Current == this) Current = null; }
+
+    // ======================= the steps =======================
+
+    void BuildSteps()
+    {
+        // ---------------- PHASE 1: basic controls ----------------
+        steps.Add(new Step { id = "mode_drive", kind = Kind.ModeDrive, title = "Switch to DRIVE mode",
+            how = "Press the B button on the gamepad.\nThe DRIVE icon (tracks, top right) turns green. In DRIVE mode the two sticks move the two tracks.",
+            keys = "Gamepad B" });
+
+        AddDrive("drive_fwd", "Drive forward",
+            "Push BOTH sticks forward (up) the same amount. Both tracks drive forward.", "Y + U",
+            new Vector2(0, 1), new Vector2(0, 1),
+            s => s.trackLeft >= StickOn && s.trackRight >= StickOn && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
+        AddDrive("drive_back", "Drive backward",
+            "Pull BOTH sticks back (down) the same amount. Both tracks drive backward.", "R + O",
+            new Vector2(0, -1), new Vector2(0, -1),
+            s => s.trackLeft <= -StickOn && s.trackRight <= -StickOn && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
+        AddDrive("turn_left_fwd", "Turn LEFT while driving forward",
+            "Push only the RIGHT stick forward, keep the left stick in the middle.\nThe right track drives, so the machine turns to the left.", "U",
+            new Vector2(0, 0), new Vector2(0, 1),
+            s => s.trackRight >= StickOn && s.trackLeft >= -0.15F && s.trackLeft <= s.trackRight - TrackDiff);
+        AddDrive("turn_right_fwd", "Turn RIGHT while driving forward",
+            "Push only the LEFT stick forward, keep the right stick in the middle.\nThe left track drives, so the machine turns to the right.", "Y",
+            new Vector2(0, 1), new Vector2(0, 0),
+            s => s.trackLeft >= StickOn && s.trackRight >= -0.15F && s.trackRight <= s.trackLeft - TrackDiff);
+        AddDrive("turn_right_back", "Turn RIGHT while driving backward",
+            "Pull only the LEFT stick back, keep the right stick in the middle.\nThe machine reverses and its rear swings to the RIGHT.", "R",
+            new Vector2(0, -1), new Vector2(0, 0),
+            s => s.trackLeft <= -StickOn && s.trackRight <= 0.15F && s.trackRight >= s.trackLeft + TrackDiff);
+        AddDrive("turn_left_back", "Turn LEFT while driving backward",
+            "Pull only the RIGHT stick back, keep the left stick in the middle.\nThe machine reverses and its rear swings to the LEFT.", "O",
+            new Vector2(0, 0), new Vector2(0, -1),
+            s => s.trackRight <= -StickOn && s.trackLeft <= 0.15F && s.trackLeft >= s.trackRight + TrackDiff);
+
+        steps.Add(new Step { id = "mode_dig", kind = Kind.ModeDig, title = "Switch to DIG mode",
+            how = "Press the B button again.\nThe DIG icon (bucket, top right) turns green. In DIG mode the sticks move the boom, arm, bucket and cab.",
+            keys = "Gamepad B" });
+
+        // Operation mode mapping (ISO): left stick X = swing, left Y = arm, right X = bucket, right Y = boom.
+        AddDig("boom_down", "Boom DOWN", "Push the RIGHT stick forward (up). The boom lowers.", "I", false, new Vector2(0, 1), s => s.boom, 1);
+        AddDig("boom_up", "Boom UP", "Pull the RIGHT stick back (down). The boom rises.", "K", false, new Vector2(0, -1), s => s.boom, -1);
+        AddDig("arm_out", "Arm OUT", "Push the LEFT stick forward (up). The arm reaches out, away from the cab.", "T", true, new Vector2(0, 1), s => s.arm, 1);
+        AddDig("arm_in", "Arm IN", "Pull the LEFT stick back (down). The arm pulls in, towards the cab.", "G", true, new Vector2(0, -1), s => s.arm, -1);
+        AddDig("bucket_open", "Bucket OPEN (dump)", "Push the RIGHT stick to the RIGHT. The bucket opens, as when dumping soil.", "L", false, new Vector2(1, 0), s => s.bucket, 1);
+        AddDig("bucket_curl", "Bucket CURL (scoop)", "Push the RIGHT stick to the LEFT. The bucket curls in, as when scooping soil.", "J", false, new Vector2(-1, 0), s => s.bucket, -1);
+        AddDig("swing_left", "Swing cab LEFT", "Push the LEFT stick to the LEFT. The cab and arm turn to the left.", "F", true, new Vector2(-1, 0), s => s.swing, -1);
+        AddDig("swing_right", "Swing cab RIGHT", "Push the LEFT stick to the RIGHT. The cab and arm turn to the right.", "H", true, new Vector2(1, 0), s => s.swing, 1);
+
+        // Information pages: what is on the screen.
+        AddInfo("info_task_panel", "The task panel (top left)", Area.TaskPanel,
+            "The panel at the top left (outlined in yellow) describes your current task.\n\n" +
+            "- First line: the goal of the task.\n" +
+            "- Lines below: what to do next and your progress, for example the next gate to drive through or how many loads are done.\n" +
+            "- Some tasks also show a small map on the right of the panel with your position and where to go.\n\n" +
+            "Before each task you also get a short description. During the task, look at this panel whenever you are unsure what to do next.");
+        AddInfo("info_status_bar", "The status bar (bottom)", Area.StatusBar,
+            "The dark bar along the bottom of the screen (outlined in yellow) shows the state of the machine as numbers:\n\n" +
+            "- MODE: TRAVEL (driving) or DIG\n" +
+            "- SWING: how far the cab is turned (degrees)\n" +
+            "- BOOM, ARM, BUCKET: the angle of each part (degrees)\n" +
+            "- BUCKET HEIGHT: height of the bucket teeth above the ground in metres (minus = below the ground, i.e. how deep you dig)\n" +
+            "- BUCKET LOAD: how full the bucket is (%)\n" +
+            "- TILT: how much the machine leans (degrees)\n" +
+            "- SPEED: driving speed (km/h)\n\n" +
+            "Try it: move the boom and watch BOOM and BUCKET HEIGHT change.");
+        AddInfo("info_incidents", "Incidents", Area.Incidents,
+            "The bottom line of the task panel (outlined in yellow) counts INCIDENTS. When one happens you hear a short warning buzz, " +
+            "the counter goes up, and the line turns red for a few seconds and says what happened.\n\n" +
+            "These count as incidents:\n" +
+            "- Hitting a worker, an obstacle (barrel, gate post, barrier, fence) or the truck\n" +
+            "- The bucket or arm hitting the truck (cab, side wall, bed floor or chassis)\n" +
+            "- Striking a buried cable or pipe\n" +
+            "- The boom, arm or bucket touching the power line\n" +
+            "- Driving the tracks too close to the edge of the trench\n" +
+            "- Digging deeper than the target depth\n" +
+            "- Digging outside the marked dig area\n" +
+            "- Moving the bucket over a worker\n" +
+            "- Spilling soil, or dumping it outside the dumping area\n\n" +
+            "Try to finish each task with as few incidents as possible.");
+
+        // ---------------- PHASE 2: digging and dumping ----------------
+        // Matches BucketLoad: soil enters only while the teeth drag/curl through soil in the dig zone; >= 25 % when
+        // leaving the soil = loaded; dump = bucket opened to ~140 deg while >= 0.5 m above the ground.
+        var intro = AddInfo("phase2_intro", "Digging and dumping", Area.None,
+            "Now you will dig one bucket of soil and dump it, step by step.\n\n" +
+            "You can dig anywhere in front of the machine and dump anywhere.");
+        intro.phase = 2;
+        intro.onStart = () => site.BuildDigSite();
+
+        AddTask("dig_in", "Teeth into the ground",
+            "Reach out with the arm, open the bucket a little, then lower the boom until the teeth are in the ground.",
+            () => TeethInSoil,
+            () => $"Bucket height: {ctl.Machine.BucketHeightAboveGround:+0.00;-0.00} m",
+            null, null, null, null);
+        steps[steps.Count - 1].onStart = () => dumpsAtCycleStart = site.Dumps;
+        AddTask("dig_scoop", "Scoop the soil",
+            "Pull the arm in and curl the bucket at the same time, dragging the bucket through the soil.",
+            () => site.Load.Fill >= 0.6F || site.Load.IsLoaded,
+            () => $"Bucket load: {Mathf.RoundToInt(site.Load.Fill * 100F)} %",
+            () => !TeethInSoil && site.Load.Fill < 0.05F ? "Lower the teeth into the ground first." : "",
+            null, null, null);
+        AddTask("dig_lift", "Lift the soil out",
+            "Keep the bucket curled in and raise the boom to lift the bucket out of the ground.",
+            () => site.Load.IsLoaded && ctl.Machine.BucketHeightAboveGround > 0.5F,
+            () => $"Bucket load: {Mathf.RoundToInt(site.Load.Fill * 100F)} %    Bucket height: {ctl.Machine.BucketHeightAboveGround:+0.00;-0.00} m",
+            null,
+            () => !site.Load.IsLoaded && site.Load.Fill < 0.05F && !TeethInSoil, "dig_in",
+            "The bucket was not full enough and the soil fell back. Scoop again.");
+        AddTask("dump_open", "Dump the soil",
+            "Keep the bucket curled, swing the cab to any spot you like, then open the bucket fully (RIGHT stick right).",
+            () => site.Dumps > dumpsAtCycleStart,
+            () => $"Bucket angle: {ctl.Machine.bucketAngle:0}°  (opens fully at about 140°)",
+            () => ctl.Machine.BucketHeightAboveGround < 0.5F ? "Lift the bucket a bit higher first." : "",
+            () => !site.Load.IsLoaded && site.Dumps == dumpsAtCycleStart, "dig_in",
+            "The soil fell out of the bucket. Dig again.");
+        AddTask("cycle_own", "Now one more on your own",
+            "Dig one more bucket of soil and dump it - anywhere you like.",
+            () => site.Dumps > dumpsAtStepStart,
+            () => $"Bucket load: {Mathf.RoundToInt(site.Load.Fill * 100F)} %",
+            null, null, null, null);
+    }
+
+    void AddDrive(string id, string t, string how, string keys, Vector2 l, Vector2 r, Func<InputSnapshot, bool> ok)
+        => steps.Add(new Step { id = id, kind = Kind.Drive, title = t, how = how, keys = keys, targetL = l, targetR = r, ok = ok });
+
+    // Dig step: the chosen axis must be pushed in the right direction and be the largest operation input.
+    void AddDig(string id, string t, string how, string keys, bool leftStick, Vector2 target, Func<InputSnapshot, float> axis, int sign)
+    {
+        steps.Add(new Step
+        {
+            id = id, kind = Kind.Dig, title = t, how = how, keys = keys,
+            targetL = leftStick ? target : Vector2.zero, targetR = leftStick ? Vector2.zero : target,
+            ok = s =>
+            {
+                float v = axis(s) * sign;
+                float maxOther = Mathf.Max(Mathf.Abs(s.swing), Mathf.Abs(s.boom), Mathf.Abs(s.arm), Mathf.Abs(s.bucket));
+                return v >= StickOn && v >= maxOther - 0.001F;
+            }
+        });
+    }
+
+    Step AddInfo(string id, string t, Area area, string how)
+    {
+        var s = new Step { id = id, kind = Kind.Info, title = t, how = how, keys = "Gamepad A", area = area };
+        steps.Add(s);
+        return s;
+    }
+
+    void AddTask(string id, string t, string how, Func<bool> done, Func<string> status, Func<string> hintFn,
+                 Func<bool> lost, string backTo, string lostText)
+        => steps.Add(new Step { id = id, phase = 2, kind = Kind.Task, title = t, how = how, keys = "",
+                                done = done, status = status, hint = hintFn, lost = lost, backTo = backTo, lostText = lostText });
+
+    Vector3 Tip => ctl.Machine.BucketTipPosition;
+    bool TeethInSoil => Tip.y - TerrainDigger.CurrentGroundHeight(Tip) < 0.15F;
+
+    // ======================= progress =======================
+
+    bool Active => !Done && SM != null && SM.IsTrialRunning && SM.CurrentTrial.index == trialIndex && ctl != null;
+    bool FreeActive => Done && SM != null && SM.IsTrialRunning && SM.CurrentTrial.index == trialIndex;
+
+    void Update()
+    {
+        var pad = Gamepad.current; var kb = Keyboard.current;
+
+        // Phase 3: hold A to finish the practice.
+        if (FreeActive)
+        {
+            bool aHeld = pad != null && pad.buttonSouth.isPressed;
+            holdA = aHeld ? holdA + Time.unscaledDeltaTime : 0F;
+            if (holdA >= HoldAToContinue)
+            {
+                StudyLogger.Log("practice_ready", $"free_practice_s={SM.TrialTime - DoneAt:F1}");
+                SM.EndTrial("participant_ready");
+            }
+            return;
+        }
+        if (!Active) return;
+
+        bool skip = (pad != null && pad.selectButton.wasPressedThisFrame) || (kb != null && kb.nKey.wasPressedThisFrame);
+        if (skip)
+        {
+            StudyLogger.Log("guide_step_skipped", $"{index + 1};{steps[index].id};held={steps[index].held:F1}");
+            NextStep();
+            return;
+        }
+
+        // Info page: A (or Enter for the experimenter) continues, once the page has been up for InfoMinSeconds.
+        var st = steps[index];
+        bool next = (pad != null && pad.buttonSouth.wasPressedThisFrame) || (kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame));
+        if (st.kind == Kind.Info && next && SM.TrialTime - st.startedAt >= InfoMinSeconds) CompleteStep();
+    }
+
+    void FixedUpdate()
+    {
+        if (!Active) return;
+        if (SM.TrialTime >= GuideMaxSeconds) { Finish("time_cap"); return; }
+
+        var s = steps[index];
+        var input = ctl.LastInput;
+        switch (s.kind)
+        {
+            case Kind.ModeDrive: if (ctl.IsTravelMode) CompleteStep(); return;
+            case Kind.ModeDig: if (!ctl.IsTravelMode) CompleteStep(); return;
+            case Kind.Info: return;   // continued with A (see Update)
+            case Kind.Task:
+                // Soil dumped already during the guided cycle (e.g. opened the bucket early over the dump area):
+                // the cycle counts as done -> jump to the "one more on your own" step.
+                if (s.id != "cycle_own" && site.Dumps > dumpsAtCycleStart)
+                {
+                    StudyLogger.Log("guide_step_done", $"{index + 1};{s.id};dumped_early");
+                    index = steps.FindIndex(q => q.id == "cycle_own");
+                    StartStep();
+                    return;
+                }
+                if (s.lost != null && s.lost()) { GoBack(s); return; }
+                lastOk = !ctl.IsTravelMode && s.done();
+                s.held = lastOk ? s.held + Time.fixedDeltaTime : 0F;
+                if (s.held >= TaskConfirmSeconds) CompleteStep();
+                return;
+        }
+
+        bool rightMode = (s.kind == Kind.Drive) == ctl.IsTravelMode;
+        lastOk = rightMode && s.ok(input);
+        bool grace = SM.TrialTime - s.startedAt < HintGraceSeconds;
+        wrongStreak = !lastOk && (input.Any || !rightMode) ? wrongStreak + Time.fixedDeltaTime : 0F;
+        if (lastOk) s.held += Time.fixedDeltaTime;
+        else if (input.Any && !grace) s.wrong += Time.fixedDeltaTime;
+        if (s.held >= HoldFor(s.id)) CompleteStep();
+    }
+
+    void CompleteStep()
+    {
+        var s = steps[index];
+        StudyLogger.Log("guide_step_done", $"{index + 1};{s.id};took={SM.TrialTime - s.startedAt:F1};held={s.held:F1};wrong={s.wrong:F1}");
+        lastOk = false;
+        NextStep();
+    }
+
+    void NextStep()
+    {
+        index++;
+        if (index >= steps.Count) { Finish("completed"); return; }
+        StartStep();   // the next step starts straight away
+    }
+
+    // Phase 2: the soil was lost -> back to an earlier step, with a short explanation.
+    void GoBack(Step s)
+    {
+        int to = steps.FindIndex(x => x.id == s.backTo);
+        if (to < 0) return;
+        StudyLogger.Log("guide_step_back", $"{s.id}->{s.backTo}");
+        backMessage = s.lostText;
+        backMessageUntil = SM.TrialTime + 5F;
+        index = to;
+        StartStep();
+    }
+
+    void StartStep()
+    {
+        var s = steps[index];
+        s.startedAt = SM.TrialTime;
+        s.held = 0F;
+        lastOk = false;
+        wrongStreak = 0F;
+        s.onStart?.Invoke();
+        if (site != null) dumpsAtStepStart = site.Dumps;
+        StudyLogger.Log("guide_step_start", $"{index + 1};{s.id}");
+    }
+
+    void Finish(string reason)
+    {
+        if (Done) return;
+        Done = true;
+        DoneAt = SM.TrialTime;
+        index = Mathf.Min(index, steps.Count - 1);
+        if (site != null) site.BuildDigSite();   // free practice always has the dig and dump areas
+        StudyLogger.Log("guide_complete", $"{reason};t={DoneAt:F1}");
+    }
+
+    // ======================= drawing (right-hand panel) =======================
+
+    void OnGUI()
+    {
+        if (SM == null || SM.CurrentState != StudyManager.State.Running || SM.CurrentTrial.index != trialIndex) return;
+        GUI.depth = -10;                           // on top of the task panel (for the yellow outlines)
+        float k = Screen.height / 1080F;
+        MakeStyles(k);
+
+        Rect slot = StudyLayout.PanelSlot(0, 1);   // whole right panel (viewport coords, y up)
+        float top = 150F * k;                      // leave the mode icons (top right) visible
+        var r = new Rect(slot.x * Screen.width, (1F - slot.yMax) * Screen.height + top,
+                         slot.width * Screen.width, slot.height * Screen.height - top);
+        float pad = 20F * k, x = r.x + pad, w = r.width - 2 * pad, y = r.y + pad;
+
+        if (Done) { DrawFree(r, x, y, w, k); return; }
+
+        Box(r, new Color(0.07F, 0.08F, 0.09F, 0.95F));
+        var s = steps[index];
+
+        // Header: phase + step within the phase, and one progress segment per step of this phase.
+        int first = steps.FindIndex(q => q.phase == s.phase), count = steps.FindAll(q => q.phase == s.phase).Count;
+        int pos = index - first;
+        GUI.Label(new Rect(x, y, w, 24 * k), $"PHASE {s.phase} OF 3 - {PhaseName(s.phase).ToUpper()}   -   step {pos + 1} of {count}", small);
+        y += 28 * k;
+        float seg = w / count;
+        for (int i = 0; i < count; i++)
+        {
+            Color c = i < pos ? new Color(0.2F, 0.8F, 0.3F) : i == pos ? new Color(1F, 0.8F, 0.1F) : new Color(0.3F, 0.3F, 0.32F);
+            Fill(new Rect(x + i * seg + 1, y, seg - 2, 8 * k), c);
+        }
+        y += 22 * k;
+
+        // Title.
+        GUI.Label(new Rect(x, y, w, 40 * k), s.title, title);
+        y += 44 * k;
+
+        if (s.kind == Kind.Info) { DrawInfo(s, x, y, w, r, k); return; }
+
+        // Mode badge.
+        bool needDrive = s.kind == Kind.ModeDrive || s.kind == Kind.Drive;
+        bool modeOk = s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig || needDrive == ctl.IsTravelMode;
+        string badge = s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig
+            ? "Now in " + (ctl.IsTravelMode ? "DRIVE" : "DIG") + " mode"
+            : "Mode needed: " + (needDrive ? "DRIVE" : "DIG") + (modeOk ? "   (OK)" : "   - press B");
+        Fill(new Rect(x, y, w, 30 * k), modeOk ? new Color(0.15F, 0.45F, 0.2F) : new Color(0.75F, 0.35F, 0.05F));
+        GUI.Label(new Rect(x + 10 * k, y + 3 * k, w - 20 * k, 26 * k), badge, body);
+        y += 42 * k;
+
+        // Instructions.
+        float hh = body.CalcHeight(new GUIContent(s.how), w);
+        GUI.Label(new Rect(x, y, w, hh), s.how, body);
+        y += hh + 14 * k;
+
+        if (s.kind == Kind.Task) { DrawTask(s, x, y, w, k, modeOk); return; }
+
+        // Stick diagrams (or the B button for the mode steps).
+        float d = Mathf.Min((w - 30 * k) / 2F, 170F * k);
+        if (s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig)
+        {
+            var b = new Rect(x + (w - d) / 2F, y + 22 * k, d, d);
+            Fill(b, new Color(0.8F, 0.15F, 0.12F));
+            GUI.Label(b, "B", bigCenter);
+            y += d + 34 * k;
+        }
+        else
+        {
+            var input = ctl.LastInput;
+            Vector2 curL, curR;
+            if (ctl.IsTravelMode) { curL = new Vector2(0, input.trackLeft); curR = new Vector2(0, input.trackRight); }
+            else { curL = new Vector2(input.swing, input.arm); curR = new Vector2(input.bucket, input.boom); }
+            float gap = w - 2 * d;
+            Stick(new Rect(x, y + 22 * k, d, d), "LEFT STICK", s.targetL, curL, k);
+            Stick(new Rect(x + d + gap, y + 22 * k, d, d), "RIGHT STICK", s.targetR, curR, k);
+            y += d + 34 * k;
+        }
+        bool stickStep = s.kind == Kind.Drive || s.kind == Kind.Dig;
+        // Keyboard keys (s.keys) are not shown: the study uses the gamepad only.
+        if (stickStep) GUI.Label(new Rect(x, y, w, 24 * k), "Yellow = target,  white dot = your stick", small);
+        y += 34 * k;
+
+        // Hold bar.
+        if (stickStep)
+        {
+            float need = HoldFor(s.id);
+            GUI.Label(new Rect(x, y, w, 26 * k), "Hold the correct control until the bar is full", body);
+            y += 30 * k;
+            var bar = new Rect(x, y, w, 22 * k);
+            Fill(bar, new Color(0.25F, 0.25F, 0.27F));
+            Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(s.held / need), bar.height), lastOk ? new Color(0.2F, 0.85F, 0.3F) : new Color(0.15F, 0.55F, 0.2F));
+            y += 34 * k;
+
+            // Hints wait HintGraceSeconds after the step starts and need WrongBeforeHint of wrong input,
+            // so they do not flash up while the previous control is still being released.
+            bool showWrong = SM.TrialTime - s.startedAt >= HintGraceSeconds && wrongStreak >= WrongBeforeHint;
+            string h = lastOk ? "Correct - keep holding."
+                     : !showWrong ? ""
+                     : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. Press B to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
+                     : "Not quite - move the white dot onto the yellow target.";
+            hint.normal.textColor = lastOk ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
+            GUI.Label(new Rect(x, y, w, 60 * k), h, hint);
+        }
+    }
+
+    // Phase 2 task: live value line + hint (soil lost / wrong mode / contextual).
+    void DrawTask(Step s, float x, float y, float w, float k, bool modeOk)
+    {
+        if (s.status != null)
+        {
+            Fill(new Rect(x, y, w, 34 * k), new Color(0.16F, 0.17F, 0.19F));
+            GUI.Label(new Rect(x + 10 * k, y + 5 * k, w - 20 * k, 28 * k), s.status(), body);
+            y += 48 * k;
+        }
+        bool settled = SM.TrialTime - s.startedAt >= HintGraceSeconds;
+        string h = SM.TrialTime < backMessageUntil ? backMessage
+                 : lastOk ? "Good!"
+                 : !settled ? ""
+                 : !modeOk ? "You are in DRIVE mode. Press B to switch to DIG mode."
+                 : s.hint != null ? s.hint() : "";
+        hint.normal.textColor = lastOk ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
+        GUI.Label(new Rect(x, y, w, 80 * k), h, hint);
+    }
+
+    // Phase 3: small card - free practice, hold A when ready, time left.
+    void DrawFree(Rect r, float x, float y, float w, float k)
+    {
+        var card = new Rect(r.x, r.y, r.width, 330F * k);
+        Box(card, new Color(0.07F, 0.08F, 0.09F, 0.95F));
+        GUI.Label(new Rect(x, y, w, 24 * k), "PHASE 3 OF 3 - FREE PRACTICE", small);
+        y += 30 * k;
+        GUI.Label(new Rect(x, y, w, 40 * k), "Practise on your own", title);
+        y += 46 * k;
+        string how = "Drive around, or dig and dump anywhere you like - whatever you want to practise.";
+        float hh = body.CalcHeight(new GUIContent(how), w);
+        GUI.Label(new Rect(x, y, w, hh), how, body);
+        y += hh + 16 * k;
+
+        float left = Mathf.Max(0F, DoneAt + SM.practiceDurationSeconds - SM.TrialTime);
+        GUI.Label(new Rect(x, y, w, 26 * k), $"Time left: {Mathf.FloorToInt(left / 60F)}:{Mathf.FloorToInt(left % 60F):00}", body);
+        y += 36 * k;
+
+        float bs = 46F * k;
+        var a = new Rect(x, y, bs, bs);
+        Fill(a, new Color(0.2F, 0.7F, 0.25F));
+        GUI.Label(a, "A", bigCenter);
+        hint.normal.textColor = Color.white;
+        GUI.Label(new Rect(x + bs + 14 * k, y, w - bs - 14 * k, bs), "Ready? Hold A to start the tasks", hint);
+        y += bs + 8 * k;
+        var bar = new Rect(x, y, w, 14 * k);
+        Fill(bar, new Color(0.25F, 0.25F, 0.27F));
+        Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(holdA / HoldAToContinue), bar.height), new Color(0.2F, 0.85F, 0.3F));
+    }
+
+    // Info page: text, "press A" at the bottom of the panel, and a pulsing yellow outline around the explained screen part.
+    void DrawInfo(Step s, float x, float y, float w, Rect panel, float k)
+    {
+        float hh = body.CalcHeight(new GUIContent(s.how), w);
+        GUI.Label(new Rect(x, y, w, hh), s.how, body);
+
+        bool ready = SM.TrialTime - s.startedAt >= InfoMinSeconds;
+        float bs = 54F * k, by = panel.yMax - bs - 24F * k;
+        var a = new Rect(x, by, bs, bs);
+        Fill(a, ready ? new Color(0.2F, 0.7F, 0.25F) : new Color(0.3F, 0.3F, 0.32F));
+        GUI.Label(a, "A", bigCenter);
+        GUI.Label(new Rect(x + bs + 16F * k, by, w - bs - 16F * k, bs), ready ? "Press A to continue" : "Read this first...", title);
+
+        Rect target = AreaRect(s.area);
+        if (target.width > 0F)
+        {
+            float pulse = 0.55F + 0.45F * Mathf.Sin(Time.unscaledTime * 5F);
+            Outline(target, new Color(1F, 0.85F, 0.1F, pulse), 4F * k);
+        }
+    }
+
+    // Screen rectangles (GUI coordinates, y down) of the parts explained by the info pages.
+    // Task panel geometry matches ScenarioRunner.OnGUI (16 px margin, 520 px wide without map, text 118 + incident line 26).
+    static Rect AreaRect(Area a)
+    {
+        const float m = 16F, textH = 118F, incH = 26F;
+        float width = ScenarioRunner.Current != null && ScenarioRunner.Current.Map != null ? 640F : 520F;
+        switch (a)
+        {
+            case Area.TaskPanel: return new Rect(m, m, width, textH + incH + 16F);
+            case Area.Incidents: return new Rect(m, m + 8F + textH - 4F, width, incH + 8F);
+            case Area.StatusBar:
+                float h = StudyLayout.BarHeight * Screen.height;
+                return new Rect(0F, Screen.height - h, Screen.width, h);
+            default: return Rect.zero;
+        }
+    }
+
+    static void Outline(Rect r, Color c, float t)
+    {
+        r = new Rect(r.x - t, r.y - t, r.width + 2 * t, r.height + 2 * t);
+        r.xMin = Mathf.Max(0F, r.xMin); r.yMin = Mathf.Max(0F, r.yMin);
+        r.xMax = Mathf.Min(Screen.width, r.xMax); r.yMax = Mathf.Min(Screen.height, r.yMax);
+        Fill(new Rect(r.x, r.y, r.width, t), c);
+        Fill(new Rect(r.x, r.yMax - t, r.width, t), c);
+        Fill(new Rect(r.x, r.y, t, r.height), c);
+        Fill(new Rect(r.xMax - t, r.y, t, r.height), c);
+    }
+
+    // One stick: square area, cross-hair, yellow target marker, current position dot.
+    void Stick(Rect r, string label, Vector2 target, Vector2 cur, float k)
+    {
+        GUI.Label(new Rect(r.x, r.y - 22 * k, r.width, 20 * k), label, center);
+        Fill(r, new Color(0.16F, 0.17F, 0.19F));
+        Fill(new Rect(r.center.x - 1, r.y, 2, r.height), new Color(0.32F, 0.33F, 0.35F));
+        Fill(new Rect(r.x, r.center.y - 1, r.width, 2), new Color(0.32F, 0.33F, 0.35F));
+        float rad = r.width / 2F - 14 * k;
+        Vector2 P(Vector2 v) => new Vector2(r.center.x + v.x * rad, r.center.y - v.y * rad);   // stick up = screen up
+
+        bool idle = target == Vector2.zero;
+        Vector2 tp = P(target);
+        float ts = (idle ? 22F : 30F) * k;
+        Color tc = idle ? new Color(0.6F, 0.6F, 0.62F, 0.8F) : new Color(1F, 0.8F, 0.1F, 0.9F);
+        Fill(new Rect(tp.x - ts / 2, tp.y - ts / 2, ts, ts), tc);
+        if (idle) GUI.Label(new Rect(r.x, r.yMax - 22 * k, r.width, 20 * k), "keep centred", center);
+
+        Vector2 cp = P(new Vector2(Mathf.Clamp(cur.x, -1, 1), Mathf.Clamp(cur.y, -1, 1)));
+        float cs = 14F * k;
+        Fill(new Rect(cp.x - cs / 2, cp.y - cs / 2, cs, cs), lastOk ? new Color(0.3F, 1F, 0.4F) : Color.white);
+    }
+
+    static void Fill(Rect r, Color c)
+    {
+        var old = GUI.color; GUI.color = c;
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        GUI.color = old;
+    }
+
+    static void Box(Rect r, Color c) => Fill(r, c);
+
+    void MakeStyles(float k)
+    {
+        if (small == null)
+        {
+            small = new GUIStyle(GUI.skin.label) { wordWrap = true };
+            title = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, wordWrap = true };
+            body = new GUIStyle(GUI.skin.label) { wordWrap = true };
+            hint = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, wordWrap = true };
+            center = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter };
+            bigCenter = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, wordWrap = true };
+            small.normal.textColor = new Color(0.75F, 0.75F, 0.78F);
+            center.normal.textColor = new Color(0.8F, 0.8F, 0.82F);
+            title.normal.textColor = body.normal.textColor = bigCenter.normal.textColor = Color.white;
+        }
+        small.fontSize = Mathf.RoundToInt(15 * k);
+        title.fontSize = Mathf.RoundToInt(28 * k);
+        body.fontSize = Mathf.RoundToInt(18 * k);
+        hint.fontSize = Mathf.RoundToInt(18 * k);
+        center.fontSize = Mathf.RoundToInt(14 * k);
+        bigCenter.fontSize = Mathf.RoundToInt(26 * k);
+    }
+}
