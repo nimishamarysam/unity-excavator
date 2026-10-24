@@ -38,7 +38,8 @@ public class StudyManager : MonoBehaviour
 
     [Header("Timing")]
     public float trialDurationSeconds = 240F;     // max length of a measured trial
-    public float practiceDurationSeconds = 300F;  // max length of the practice
+    public float practiceDurationSeconds = 180F;  // length of the FREE practice; with the guided walkthrough
+                                                  // (PracticeGuide) it starts when the walkthrough is finished
 
     public State CurrentState { get; private set; } = State.Setup;
     public int ParticipantId { get; private set; } = 1;
@@ -55,6 +56,17 @@ public class StudyManager : MonoBehaviour
         }
     }
     public ExcavatorController Controller { get; private set; }
+
+    // Practice: no time limit during the guided walkthrough, then practiceDurationSeconds of free practice.
+    float PracticeLimit
+    {
+        get
+        {
+            var g = PracticeGuide.Current;
+            if (g == null) return practiceDurationSeconds;          // walkthrough switched off (or not built yet)
+            return g.Done ? g.DoneAt + practiceDurationSeconds : float.MaxValue;
+        }
+    }
 
     // What the other scripts should show in the current condition.
     public bool ShowContextViews => IsMeasured && CurrentTrial.condition >= StudyCondition.C2_ContextAware;
@@ -174,7 +186,7 @@ public class StudyManager : MonoBehaviour
 
             case State.Running:
                 TrialTime += Time.deltaTime;
-                float limit = CurrentTrial.scenario == StudyScenario.Practice ? practiceDurationSeconds : TrialLimit;
+                float limit = CurrentTrial.scenario == StudyScenario.Practice ? PracticeLimit : TrialLimit;
                 if (TrialTime >= limit) EndTrial("time_limit");
                 else if (abort || padX) EndTrial("ended_by_experimenter");
                 else if (pause) { CurrentState = State.Paused; Freeze(true); StudyLogger.Log("pause"); }
@@ -275,11 +287,26 @@ public class StudyManager : MonoBehaviour
                 break;
 
             case State.Questionnaire:
-                GUILayout.Label("Task complete", big);
-                GUILayout.Space(10);
-                GUILayout.Label("Please fill in the SIM-TLX and SART questionnaires for this task.", normal);
-                GUILayout.FlexibleSpace();
-                GUILayout.Label("Experimenter: press A on the gamepad (or Enter) to continue.", normal);
+                if (CurrentTrial.scenario == StudyScenario.Practice)
+                {
+                    // Practice: no questionnaires, just an encouraging message before the measured tasks.
+                    GUILayout.Label("Practice complete - well done!", big);
+                    GUILayout.Space(10);
+                    GUILayout.Label("Great job! You have learned how to drive the excavator and use the boom, arm, bucket and swing controls.", normal);
+                    GUILayout.Space(10);
+                    GUILayout.Label("Next, you will start the actual tasks. Before each task you will see a short description of what to do. " +
+                                    "Take your time to read it, and work carefully - try to avoid incidents.", normal);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label("Press A on the gamepad when you are ready to continue.", normal);
+                }
+                else
+                {
+                    GUILayout.Label("Task complete", big);
+                    GUILayout.Space(10);
+                    GUILayout.Label("Please fill in the SIM-TLX and SART questionnaires for this task.", normal);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label("Experimenter: press A on the gamepad (or Enter) to continue.", normal);
+                }
                 break;
 
             case State.Finished:

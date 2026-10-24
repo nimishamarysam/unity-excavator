@@ -7,35 +7,73 @@ using UnityEngine;
 // Random jitter comes from the trial's seed, so a trial can be reproduced.
 // ---------------------------------------------------------------------------
 
-// PRACTICE: free driving + a dig square and a dump square to learn the controls. No hazards.
+// PRACTICE (run by PracticeGuide, instructions in the right panel), three phases:
+//   1 basic controls   2 digging and dumping (guided)   3 free practice (hold A when ready, or time limit).
+// The bucket is solid during phase 1 (cutting edges off: it stops on the ground). When phase 2 starts,
+// BuildDigSite() switches digging on in a large square around the machine: NO marked dig or dump area
+// (so the practice does not look like the digging scenario) - dig anywhere, dump anywhere. No hazards.
 public class PracticeScenario : Scenario
 {
-    BucketLoad load;
-    Vector3 spoil, f;
-    int dumps;
+    PracticeGuide guide;
+    bool siteBuilt;
 
-    public override string TaskText => "Practice: try driving, digging and dumping";
-    public override Vector3? DumpTarget => spoil;
-    public override string ProgressText => $"Dig in the brown square, dump on the white square.  Dumps: {dumps}";
-    public override bool DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid) { c = spoil; fw = f; len = wid = 3.5F; return true; }
+    public BucketLoad Load { get; private set; }
+    public int Dumps { get; private set; }
+
+    public override string TaskText
+    {
+        get
+        {
+            int phase = guide != null ? guide.Phase : 3;
+            return $"Practice - phase {phase} of 3: {PracticeGuide.PhaseName(phase)}";
+        }
+    }
+
+    public override string ProgressText
+    {
+        get
+        {
+            if (guide != null && !guide.Done) return "Follow the instructions on the right.";
+            string text = "Practise on your own. Hold A when you are ready to start the tasks.";
+            if (siteBuilt) text += $"  Dumps: {Dumps}";
+            if (SM != null)
+            {
+                float start = guide != null ? guide.DoneAt : 0F;
+                float left = Mathf.Max(0F, start + SM.practiceDurationSeconds - SM.TrialTime);
+                text += $"\nTime left: {Mathf.FloorToInt(left / 60F)}:{Mathf.FloorToInt(left % 60F):00}";
+            }
+            return text;
+        }
+    }
 
     protected override void Build()
     {
-        f = Vector3.right;
-        PlaceMachine(-16.5F, -7.5F, f);
-        float reach = M.MaxReach;
-        M.EnableCuttingEdges(true);   // lets the bucket go into the ground
+        PlaceMachine(-16.5F, -7.5F, Vector3.right);
+        M.EnableCuttingEdges(false);   // phase 1: solid bucket, it stops on the ground instead of going into it
 
-        Vector3 pit = Rel(0.6F * reach, 0);
-        TerrainDigger.Instance.SetZone(pit, f, 3F, 3F, 1.5F);
-        Outline("dig", pit, f, 3F, 3F, BucketLoad.SoilMaterial().color);
+        if (PracticeGuide.Enabled)
+        {
+            guide = gameObject.AddComponent<PracticeGuide>();
+            guide.Init(Ctl, this);
+        }
+        else BuildDigSite();
+    }
 
-        spoil = Rel(0, 0.6F * reach);
-        Outline("spoil", spoil, f, 3.5F, 3.5F, WorldBuilder.White);
+    // Phase 2: digging possible all around the machine (where it stands NOW), nothing marked on the ground.
+    // Dumping works anywhere (BucketLoad only needs the bucket lifted >= 0.5 m and opened fully).
+    // Safe to call more than once.
+    public void BuildDigSite()
+    {
+        if (siteBuilt) return;
+        siteBuilt = true;
+        float size = 2F * (M.MaxReach + 3F);   // covers everything the bucket can reach, also after a little driving
+        M.EnableCuttingEdges(true);            // lets the bucket go into the ground
+        TerrainDigger.Instance.SetZone(WorldBuilder.OnGround(M.SwingCenter), M.ForwardFlat, size, size, 1.5F);
 
-        load = gameObject.AddComponent<BucketLoad>();
-        load.Init(M);
-        load.Dumped += p => { dumps++; StudyLogger.Log("dump", (InRect(p, spoil, f, 3.5F, 3.5F, 0.8F) ? "spoil_area" : "outside") + $";amount={load.LastDumpAmount:F2}"); };
+        Load = gameObject.AddComponent<BucketLoad>();
+        Load.Init(M);
+        Load.Dumped += p => { Dumps++; StudyLogger.Log("dump", $"anywhere;x={p.x:F1};z={p.z:F1};amount={Load.LastDumpAmount:F2}"); };
+        StudyLogger.Log("practice_dig_site", $"center={M.SwingCenter.x:F1},{M.SwingCenter.z:F1};size={size:F1}");
     }
 }
 

@@ -12,7 +12,14 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 |---|---|---|---|
 | Run the study at all (off = free driving) | `StudyBootstrap.Enabled` (static switch) | `true` | `Study/StudyManager.cs` |
 | Max length of a measured trial | `trialDurationSeconds` | 240 s | `Study/StudyManager.cs` |
-| Max length of the practice trial | `practiceDurationSeconds` | 300 s | `Study/StudyManager.cs` |
+| Length of the FREE practice (starts after the guided walkthrough; no time limit during the walkthrough) | `practiceDurationSeconds` | 180 s (participant can end it earlier by holding A) | `Study/StudyManager.cs` |
+| Guided control walkthrough at the start of the practice (phase 1: mode switch, drive fwd/back, turn left/right fwd/back, mode switch, boom/arm/bucket/swing both ways, then 3 info pages - task panel, status bar, incidents - continued with A after `InfoMinSeconds` 3 s) | `PracticeGuide.Enabled` (static switch) | `true` | `Study/Scenarios/PracticeGuide.cs` |
+| Practice phase 2 (guided digging and dumping: teeth in, scoop, lift, swing anywhere and dump, one more alone); NO marked areas - dig zone = square of 2 × (reach + 3 m) around the machine where it stands when phase 2 starts, dump anywhere | `PracticeScenario.BuildDigSite`, `PracticeGuide.BuildSteps` | - | `Study/Scenarios/Scenarios.cs`, `Study/Scenarios/PracticeGuide.cs` |
+| Practice phase 3: hold A to finish the practice early | `PracticeGuide.HoldAToContinue` | 1.5 s | `Study/Scenarios/PracticeGuide.cs` |
+| Correct input needed per walkthrough step (cumulative, wrong mode/stick not counted); per-step overrides in `HoldPerStep` | `PracticeGuide.HoldSeconds`, `PracticeGuide.HoldPerStep` | 3 s default; boom down 1.5 s, boom up 2 s, arm out 2 s, arm in 3 s, bucket 1.5 s | `Study/Scenarios/PracticeGuide.cs` |
+| Walkthrough safety cap (walkthrough ends, free practice starts) | `GuideMaxSeconds` | 1200 s | `Study/Scenarios/PracticeGuide.cs` |
+| Walkthrough hint delay: no "not quite" / wrong-mode hint for the first seconds of a step, and only after continuous wrong input | `HintGraceSeconds`, `WrongBeforeHint` | 1.5 s, 0.5 s | `Study/Scenarios/PracticeGuide.cs` |
+| Experimenter: skip the current walkthrough step | gamepad Select/Back or keyboard N | – | `Study/Scenarios/PracticeGuide.cs` |
 | Practice trial on/off | setup screen toggle (gamepad Y) | on | `Study/StudyManager.cs` (`includePractice`) |
 | Condition order (Latin square) | `latinSquare` | C1-C2-C3 / C2-C3-C1 / C3-C1-C2 | `Study/StudyTypes.cs` |
 | Which scenarios are in the study | `scenarioOrder` | Driving, Digging, Dig and dump | `Study/StudyTypes.cs` |
@@ -127,7 +134,7 @@ All in `Study/Scenarios/Scenarios.cs` unless noted. Per-trial randomness uses `R
 
 | Scenario | Settings (default) |
 |---|---|
-| Practice | dig square 3×3 m, depth 1.5 m; spoil square 3.5 m (in `PracticeScenario.Build`) |
+| Practice | phase 1 solid bucket (`EnableCuttingEdges(false)`); from phase 2: invisible dig zone all around the machine (max depth 1.5 m), dump anywhere, nothing marked (in `PracticeScenario.BuildDigSite`) |
 | Easy – Driving | `GateWidth` 10 m; `GatePassBefore` 1.5 m (gate counts when the machine centre is within 1.5 m before the gate line or up to 4 m past it); `gates[]` positions; `start`; `stopLine`; barrel positions + jitter; worker timings (`crosserAt` 0.5–3.5 s after gate 1, `behindAt` 1.5–3.5 s after gate 4, stops 4 s); finish = on line, < 1 km/h for 1 s |
 | Moderate – Digging | `FixedLayout` (static switch, `true` = same trench/cable/pipe/spoil layout in every trial from `LayoutSeed` 20261018 → cable right, spoil square left; worker timing still per trial); `TargetDepth` 1.2 m; Trench done % = smooth progress `TerrainDigger.ProgressTo` (each 0.5 m cell partial credit, full at target − `ProgressTolerance` 0.2 = 1.0 m), trial completed at `CompleteAt` 0.85 of the same number; `SpoilSize` 2.5 m; `SpoilMinGap` 5 m; `SpoilSwingDeg` 120°; `PipeBelowTarget` 0.25 m; `WorkerStandSeconds` 6 s; `workPos`; `StartBehind` 9 m; trench length 0.43 × reach; cable 0.9 m deep, 0.5–0.8 m outside the edge; worker at 45–110 s; bucket over worker = `OverWorkerRadius` 1.0 m (hinge→teeth segment, horizontal) and whole bucket above the worker's ground; over-dig = target + 0.35 m; (old whole-cell share `FractionDugTo` still logged as dug= in the summary) |
 | Hard – Dig and dump | `Goal` 4 loads; `Limit` 360 s; lane waypoints `W1`, `W2`, `WP`; `TruckOffset` 0.75 × reach; `PowerLineHeight` 5.8 m; `PowerLineBeyondTruck` 1.6 m; `PitPipeEnabled` true; `PipeDepth` 1.2 m; pit 4.5 m; workers at 35–90 s (pit) and 150–230 s (truck); dig target for cues = `PipeDepth − 0.3` m |

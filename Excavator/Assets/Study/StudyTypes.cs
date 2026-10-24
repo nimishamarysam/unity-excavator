@@ -121,7 +121,12 @@ public static class StudyDesign
         switch (s)
         {
             case StudyScenario.Practice:
-                return "Try out the controls. Nothing is measured. Press B to switch between driving and digging mode.";
+                return "Nothing is measured. The panel on the right guides you through three phases:\n\n" +
+                       "Phase 1 - Basic controls: one control at a time - switching between DRIVE and DIG mode, driving and turning, " +
+                       "and the boom, arm, bucket and swing. Hold each control until its bar is full. Then a short explanation of the screen.\n\n" +
+                       "Phase 2 - Digging and dumping: dig soil from the BROWN square and dump it on the WHITE square, step by step.\n\n" +
+                       "Phase 3 - Free practice: practise on your own. Hold A when you are ready to start the tasks " +
+                       "(the practice ends after 3 minutes at the latest).";
             case StudyScenario.Easy_Driving:
                 return "Goal: drive through the 4 gates in order, then reverse to the yellow stop line.\n\n" +
                        "1. Drive forward: push both travel levers forward and pass through gates 1, 2, 3 and 4 in order.\n" +

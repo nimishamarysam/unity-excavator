@@ -113,7 +113,7 @@ public class IncidentFeedback : MonoBehaviour
             case "truck_hit_chassis": return "Bucket/arm hit the truck chassis";
             case "truck_hit_truck": return "Bucket hit the truck";
             case "spill": return "Soil spilled";
-            case "spill_too_close": return "Soil dumped too close to trench";
+            case "spill_too_close": return "Soil dumped otside the dumping area";
             case "over_dig": return "Dug too deep";
             case "dig_outside_area": return "Digging outside the area";
             case "bucket_over_worker": return "Bucket over a worker";
