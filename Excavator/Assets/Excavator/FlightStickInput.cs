@@ -1,11 +1,13 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 
 // ---------------------------------------------------------------------------
 // Single flight-stick control of the excavator.
-// Supported: Thrustmaster TCA Sidestick (preferred) and Logitech WingMan Force 3D.
-// Any other HID joystick with X/Y, twist and a trigger also works.
+// Supported: Thrustmaster TCA Sidestick (Airbus / A320 edition) and Logitech WingMan Force 3D.
+// With OnlyA320 = true (default, ExcavatorController "Only A320 Sticks") ONLY Thrustmaster TCA Sidestick
+// Airbus (A320) sticks are used; every other joystick, wheel, pedal set or throttle is ignored.
 //
 //   Operation (dig) mode                 Travel (drive) mode
 //   ---------------------------------    -----------------------------------
@@ -83,20 +85,51 @@ public class FlightStickInput : IExcavatorInput
         string n = NameOf(j);
         return !(n.Contains("q-eng") || n.Contains("quadrant") || n.Contains("throttle") || n.Contains("add-on"));
     }
-    public static bool IsTCA(Joystick j)
-    {
-        string n = NameOf(j);
-        bool tm = n.Contains("thrustmaster") || n.Contains("tca") || j.description.capabilities.Contains("\"vendorId\":1103"); // 0x044F
-        return tm && IsStick(j);
-    }
+    public static bool IsTCA(Joystick j) => IsThrustmaster(j) && IsStick(j);
     public static bool IsWingMan(Joystick j) => NameOf(j).Contains("wingman");
+
+    // ---------------- A320 sticks only ----------------
+    // true = only Thrustmaster TCA Sidestick Airbus (A320) sticks count as joysticks (set by ExcavatorController).
+    public static bool OnlyA320 = true;
+    // Words that identify an A320 stick in the device name (any of them, lower case, separated by ';').
+    public static string A320NameMatch = "sidestick;airbus;a320";
+
+    static bool IsThrustmaster(Joystick j)
+    {
+        string caps = j.description.capabilities ?? "";
+        string n = NameOf(j);
+        return caps.Contains("\"vendorId\":1103") || n.Contains("thrustmaster") || n.Contains("tca");   // 0x044F
+    }
+
+    // Thrustmaster TCA Sidestick Airbus / Sidestick X Airbus ("A320" stick). Throttle quadrants are excluded.
+    public static bool IsA320(Joystick j)
+    {
+        if (j == null || !IsStick(j) || !IsThrustmaster(j)) return false;
+        string n = NameOf(j);
+        foreach (var w in A320NameMatch.Split(';'))
+            if (w.Trim().Length > 0 && n.Contains(w.Trim().ToLowerInvariant())) return true;
+        return false;
+    }
+
+    // May this joystick be used as a control stick?
+    public static bool IsUsable(Joystick j) => IsStick(j) && (!OnlyA320 || IsA320(j));
+
+    static readonly HashSet<int> reported = new HashSet<int>();
+    // Logs each connected joystick once: used or ignored (helps when several peripherals are plugged in).
+    public static void Report(Joystick j)
+    {
+        if (j == null || !reported.Add(j.deviceId)) return;
+        Debug.Log($"[FlightStick] Joystick '{j.displayName}' (manufacturer '{j.description.manufacturer}', product '{j.description.product}', " +
+                  $"serial '{j.description.serial}') -> {(IsUsable(j) ? "USED" : OnlyA320 ? "IGNORED (not an A320 sidestick)" : "IGNORED (throttle / add-on)")}");
+    }
 
     Joystick Pick()
     {
         Joystick tca = null, wing = null, any = null;
         foreach (var j in Joystick.all)
         {
-            if (!IsStick(j)) continue;
+            Report(j);
+            if (!IsUsable(j)) continue;
             if (tca == null && IsTCA(j)) tca = j;
             else if (wing == null && IsWingMan(j)) wing = j;
             else if (any == null) any = j;
@@ -128,6 +161,8 @@ public class FlightStickInput : IExcavatorInput
         if (device == null) return null;
 
         model = IsTCA(device) ? "TCA" : IsWingMan(device) ? "WingMan" : (device.description.product ?? "joystick");
+        // Two identical A320 sticks: keep a separate calibration per physical stick when it reports a serial number.
+        if (model == "TCA" && !string.IsNullOrEmpty(device.description.serial)) model += "_" + device.description.serial;
         if (!string.IsNullOrEmpty(twistAxisName)) twist = device.TryGetChildControl<AxisControl>(twistAxisName);
         if (twist == null) twist = device.twist;
         if (twist == null) twist = device.TryGetChildControl<AxisControl>("rz");

@@ -18,9 +18,21 @@ using UnityEngine.InputSystem.Controls;
 //   like the F310 B button. Twist and throttle are not used.
 //   The F310 and the keyboard still work alongside (home testing) unless StickControls.BlockGamepadKeyboard is on.
 //
-// Which stick is left: the overlay shows it. Press S on the keyboard to swap
-// (remembered). C calibrates both sticks at once: move both to every edge for
-// 6 s, then let go for 2 s.
+// WHICH STICKS: with FlightStickInput.OnlyA320 (default) only Thrustmaster TCA Sidestick Airbus (A320)
+// sticks are used as LEFT and RIGHT, however many other joysticks, wheels, pedals or throttles are connected.
+// Every joystick is listed once in the Console as USED or IGNORED.
+//
+// WHICH IS LEFT (experimenter keys, overlay shows the result):
+//   Hold the TRIGGER of the stick that is on the left + press S  -> that stick becomes LEFT (remembered).
+//   S alone                                                      -> swap left and right (remembered).
+//   If the sticks report a USB serial number the choice follows the physical stick; otherwise it follows
+//   the order in which Windows lists them (keep both sticks in the same USB ports).
+//
+// CALIBRATION - separate for the LEFT and the RIGHT stick, each stored for that stick:
+//   Hold the TRIGGER of one stick + press C -> calibrate only that stick.
+//   C alone                                 -> calibrate both sticks.
+//   Then: move the stick(s) to every edge for 6 s, let go for 2 s. The TCA is spring-centred and reports
+//   its full range, so it normally works without calibrating.
 // ---------------------------------------------------------------------------
 public class DualStickInput : IExcavatorInput
 {
@@ -44,22 +56,38 @@ public class DualStickInput : IExcavatorInput
         public AxisCal x, y;
         public bool haveCal;
         public float fx, fy, lastRawX, lastRawY;
+        // calibration in progress for this side
+        public bool cal;
+        public float cX, cY;
     }
 
     readonly Side L = new Side { name = "left" };
     readonly Side R = new Side { name = "right" };
     bool swapped;
+    string leftSerial = "";
     bool loadedSwap;
+    bool ignoreTriggerRelease;               // trigger was used for S / C: its release must not switch the mode
+    bool useSerials;                         // both sticks report different serial numbers -> identify them by serial
 
-    int calPhase; float calTimer; float cLX, cLY, cRX, cRY; int cenN;
+    int calPhase; float calTimer; int cenN;
     const float CalMoveSeconds = 6F, CalCentreSeconds = 2F;
     public bool IsCalibrating => calPhase != 0;
 
+    // The usable sticks (A320 only by default), in a stable order: by serial number if they have one, else by device id.
     public static List<Joystick> Sticks()
     {
         var list = new List<Joystick>();
-        foreach (var j in Joystick.all) if (FlightStickInput.IsStick(j)) list.Add(j);
-        list.Sort((a, b) => a.deviceId.CompareTo(b.deviceId)); // stable order between runs
+        foreach (var j in Joystick.all)
+        {
+            FlightStickInput.Report(j);
+            if (FlightStickInput.IsUsable(j)) list.Add(j);
+        }
+        list.Sort((a, b) =>
+        {
+            string sa = a.description.serial ?? "", sb = b.description.serial ?? "";
+            if (sa != "" && sb != "" && sa != sb) return string.CompareOrdinal(sa, sb);
+            return a.deviceId.CompareTo(b.deviceId);
+        });
         return list;
     }
     public static int StickCount() => Sticks().Count;
@@ -67,13 +95,33 @@ public class DualStickInput : IExcavatorInput
     static string ModelOf(Joystick j) =>
         FlightStickInput.IsTCA(j) ? "TCA" : FlightStickInput.IsWingMan(j) ? "WingMan" : (j.description.product ?? "joystick");
 
+    static string Serial(Joystick j) => j != null ? (j.description.serial ?? "") : "";
+
     bool Find()
     {
-        if (!loadedSwap) { swapped = PlayerPrefs.GetInt("dualstick_swapped", 0) == 1; loadedSwap = true; }
+        if (!loadedSwap)
+        {
+            swapped = PlayerPrefs.GetInt("dualstick_swapped", 0) == 1;
+            leftSerial = PlayerPrefs.GetString("dualstick_left_serial", "");
+            loadedSwap = true;
+        }
         var s = Sticks();
         if (s.Count < 2) { L.dev = R.dev = null; return false; }
-        var left = swapped ? s[1] : s[0];
-        var right = swapped ? s[0] : s[1];
+        bool serials = Serial(s[0]) != "" && Serial(s[1]) != "" && Serial(s[0]) != Serial(s[1]);
+        if (serials != useSerials) { useSerials = serials; L.dev = R.dev = null; }   // calibration keys change
+
+        Joystick left, right;
+        int bySerial = useSerials && leftSerial != "" ? s.FindIndex(j => Serial(j) == leftSerial) : -1;
+        if (bySerial >= 0 && bySerial < 2)
+        {   // the remembered physical stick is LEFT
+            left = s[bySerial];
+            right = s[1 - bySerial];
+        }
+        else
+        {
+            left = swapped ? s[1] : s[0];
+            right = swapped ? s[0] : s[1];
+        }
         if (L.dev != left) Assign(L, left);
         if (R.dev != right) Assign(R, right);
         return true;
@@ -86,10 +134,35 @@ public class DualStickInput : IExcavatorInput
         side.model = ModelOf(j);
         side.fx = side.fy = 0F;
         LoadCal(side);
-        Debug.Log($"[DualStick] {side.name} stick = '{j.displayName}' (model {side.model}, calibrated={side.haveCal})");
+        Debug.Log($"[DualStick] {side.name.ToUpper()} stick = '{j.displayName}' (model {side.model}, serial '{Serial(j)}', calibrated={side.haveCal})");
     }
 
-    string Key(Side s, string axis, string part) => $"dualstick_{s.name}_{s.model}_{axis}_{part}";
+    // Make 'j' the LEFT stick (and remember it).
+    void SetLeft(Joystick j)
+    {
+        if (j == null) return;
+        var s = Sticks();
+        int i = s.IndexOf(j);
+        if (i < 0 || i > 1) return;
+        bool newSwapped = i == 1;
+        if (newSwapped != swapped && !useSerials) SwapSideCalibration();   // calibration follows the physical stick
+        swapped = newSwapped;
+        leftSerial = useSerials ? Serial(j) : "";
+        PlayerPrefs.SetInt("dualstick_swapped", swapped ? 1 : 0);
+        PlayerPrefs.SetString("dualstick_left_serial", leftSerial);
+        PlayerPrefs.Save();
+        L.dev = R.dev = null;   // re-assign (loads each stick's own calibration)
+        Find();
+        StudyLogger.Log("dualstick_left", $"{j.displayName};serial={leftSerial}");
+    }
+
+    // ---------------- calibration (stored per stick) ----------------
+    // Key: the stick's serial number if it has one (follows the physical stick), else the side (left / right).
+    string Key(Side s, string axis, string part)
+    {
+        string id = useSerials ? "sn_" + Serial(s.dev) : s.name + "_" + s.model;
+        return $"dualstick_{id}_{axis}_{part}";
+    }
 
     void LoadCal(Side s)
     {
@@ -110,6 +183,24 @@ public class DualStickInput : IExcavatorInput
         s.haveCal = true;
     }
 
+    void ClearCal(Side s)
+    {
+        foreach (var a in new[] { "x", "y" })
+            foreach (var p in new[] { "min", "c", "max" }) PlayerPrefs.DeleteKey(Key(s, a, p));
+    }
+
+    // No serial numbers: calibration is stored per side, so swapping sides must swap the stored values too.
+    void SwapSideCalibration()
+    {
+        if (L.dev == null || R.dev == null) return;
+        bool hl = L.haveCal, hr = R.haveCal;
+        AxisCal lx = L.x, ly = L.y, rx = R.x, ry = R.y;
+        ClearCal(L); ClearCal(R);
+        if (hr) { L.x = rx; L.y = ry; SaveCal(L); }
+        if (hl) { R.x = lx; R.y = ly; SaveCal(R); }
+        PlayerPrefs.Save();
+    }
+
     static float Apply(float v, AxisCal a)
     {
         if (v >= a.centre) { float r = a.max - a.centre; return r > 0.02F ? Mathf.Clamp01((v - a.centre) / r) : 0F; }
@@ -123,11 +214,19 @@ public class DualStickInput : IExcavatorInput
         return Mathf.Sign(v) * Mathf.Clamp01((a - deadZone) / (1F - deadZone));
     }
 
-    void StartCalibration()
+    void StartCalibration(bool left, bool right)
     {
-        calPhase = 1; calTimer = 0F;
-        foreach (var s in new[] { L, R }) { s.x = Def(s.lastRawX, s.lastRawX, s.lastRawX); s.y = Def(s.lastRawY, s.lastRawY, s.lastRawY); }
-        Debug.Log("[DualStick] Calibration started");
+        calPhase = 1; calTimer = 0F; cenN = 0;
+        L.cal = left; R.cal = right;
+        foreach (var s in new[] { L, R })
+        {
+            if (!s.cal) continue;
+            s.x = Def(s.lastRawX, s.lastRawX, s.lastRawX); s.y = Def(s.lastRawY, s.lastRawY, s.lastRawY);
+            s.cX = s.cY = 0F;
+        }
+        string which = left && right ? "both" : left ? "LEFT" : "RIGHT";
+        Debug.Log($"[DualStick] Calibration started: {which}");
+        StudyLogger.Log("dualstick_calibration_start", which);
     }
 
     void UpdateCalibration()
@@ -137,22 +236,38 @@ public class DualStickInput : IExcavatorInput
         {
             foreach (var s in new[] { L, R })
             {
+                if (!s.cal) continue;
                 s.x.min = Mathf.Min(s.x.min, s.lastRawX); s.x.max = Mathf.Max(s.x.max, s.lastRawX);
                 s.y.min = Mathf.Min(s.y.min, s.lastRawY); s.y.max = Mathf.Max(s.y.max, s.lastRawY);
             }
-            if (calTimer >= CalMoveSeconds) { calPhase = 2; calTimer = 0F; cLX = cLY = cRX = cRY = 0F; cenN = 0; }
+            if (calTimer >= CalMoveSeconds) { calPhase = 2; calTimer = 0F; cenN = 0; L.cX = L.cY = R.cX = R.cY = 0F; }
         }
         else
         {
-            if (calTimer > 0.7F) { cLX += L.lastRawX; cLY += L.lastRawY; cRX += R.lastRawX; cRY += R.lastRawY; cenN++; }
+            if (calTimer > 0.7F) { foreach (var s in new[] { L, R }) { s.cX += s.lastRawX; s.cY += s.lastRawY; } cenN++; }
             if (calTimer >= CalCentreSeconds && cenN > 0)
             {
-                L.x.centre = cLX / cenN; L.y.centre = cLY / cenN; R.x.centre = cRX / cenN; R.y.centre = cRY / cenN;
-                SaveCal(L); SaveCal(R); PlayerPrefs.Save();
+                foreach (var s in new[] { L, R })
+                {
+                    if (!s.cal) continue;
+                    s.x.centre = s.cX / cenN; s.y.centre = s.cY / cenN;
+                    SaveCal(s);
+                    Debug.Log($"[DualStick] Calibration saved for {s.name.ToUpper()} ({s.dev.displayName}): " +
+                              $"x {s.x.min:0.00}/{s.x.centre:0.00}/{s.x.max:0.00}  y {s.y.min:0.00}/{s.y.centre:0.00}/{s.y.max:0.00}");
+                    StudyLogger.Log("dualstick_calibration_saved", $"{s.name};x={s.x.min:0.00}/{s.x.centre:0.00}/{s.x.max:0.00};y={s.y.min:0.00}/{s.y.centre:0.00}/{s.y.max:0.00}");
+                    s.cal = false;
+                }
+                PlayerPrefs.Save();
                 calPhase = 0;
-                Debug.Log($"[DualStick] Calibration saved. left x {L.x.min:0.00}/{L.x.centre:0.00}/{L.x.max:0.00} y {L.y.min:0.00}/{L.y.centre:0.00}/{L.y.max:0.00} | right x {R.x.min:0.00}/{R.x.centre:0.00}/{R.x.max:0.00} y {R.y.min:0.00}/{R.y.centre:0.00}/{R.y.max:0.00}");
             }
         }
+    }
+
+    // Stick whose trigger is held (null = none or both).
+    Joystick TriggerHeldStick()
+    {
+        bool l = L.trigger != null && L.trigger.isPressed, r = R.trigger != null && R.trigger.isPressed;
+        return l && !r ? L.dev : r && !l ? R.dev : null;
     }
 
     public bool ModeTogglePressedThisFrame()
@@ -161,17 +276,31 @@ public class DualStickInput : IExcavatorInput
         var kb = StickControls.ExperimenterKeyboard;
         if (kb != null && calPhase == 0)
         {
-            if (kb.cKey.wasPressedThisFrame) StartCalibration();
+            if (kb.cKey.wasPressedThisFrame)
+            {
+                var held = TriggerHeldStick();
+                if (held == L.dev && held != null) StartCalibration(true, false);
+                else if (held == R.dev && held != null) StartCalibration(false, true);
+                else StartCalibration(true, true);
+                if (held != null) ignoreTriggerRelease = true;
+            }
             if (kb.sKey.wasPressedThisFrame)
             {
-                swapped = !swapped;
-                PlayerPrefs.SetInt("dualstick_swapped", swapped ? 1 : 0); PlayerPrefs.Save();
-                Find();
+                var held = TriggerHeldStick();
+                if (held != null) { SetLeft(held); ignoreTriggerRelease = true; }
+                else SetLeft(R.dev);   // swap: the current right stick becomes left
             }
         }
-        bool l = L.trigger != null && L.trigger.wasReleasedThisFrame;
-        bool r = R.trigger != null && R.trigger.wasReleasedThisFrame;
-        return l || r;
+        bool lUp = L.trigger != null && L.trigger.wasReleasedThisFrame;
+        bool rUp = R.trigger != null && R.trigger.wasReleasedThisFrame;
+        if (ignoreTriggerRelease)
+        {
+            bool anyHeld = (L.trigger != null && L.trigger.isPressed) || (R.trigger != null && R.trigger.isPressed);
+            if (!anyHeld) ignoreTriggerRelease = false;
+            return false;
+        }
+        if (calPhase != 0) return false;
+        return lUp || rUp;
     }
 
     void ReadSide(Side s, float k)
@@ -187,6 +316,7 @@ public class DualStickInput : IExcavatorInput
         if (!Find()) return;
         float k = smoothingSeconds > 0F ? 1F - Mathf.Exp(-Time.deltaTime / smoothingSeconds) : 1F;
         ReadSide(L, k); ReadSide(R, k);
+        // While calibrating, NEITHER stick moves the machine (also the one that is not being calibrated).
         if (calPhase != 0) { UpdateCalibration(); L.fx = L.fy = R.fx = R.fy = 0F; LeftOut = RightOut = Vector2.zero; return; }
 
         float lx = Dz(L.fx), ly = Dz(L.fy), rx = Dz(R.fx), ry = Dz(R.fy);
@@ -208,13 +338,16 @@ public class DualStickInput : IExcavatorInput
 
     public string DebugText()
     {
-        if (!Find()) return "Two-stick layout: need 2 joysticks connected";
-        string head = calPhase == 1 ? $"CALIBRATING ({CalMoveSeconds - calTimer:0}s): move BOTH sticks to every edge (circle them)\n"
-                    : calPhase == 2 ? "CALIBRATING: let go of both sticks completely\n"
-                    : "Two sticks (gamepad layout)   S = swap left/right   C = calibrate   trigger = drive/dig\n";
+        if (!Find())
+            return FlightStickInput.OnlyA320 ? "Two-stick layout: need 2 A320 sidesticks (other joysticks are ignored)"
+                                             : "Two-stick layout: need 2 joysticks connected";
+        string which = L.cal && R.cal ? "BOTH sticks" : L.cal ? "the LEFT stick" : "the RIGHT stick";
+        string head = calPhase == 1 ? $"CALIBRATING {which.ToUpper()} ({CalMoveSeconds - calTimer:0}s): move it to every edge (circle it)\n"
+                    : calPhase == 2 ? $"CALIBRATING {which.ToUpper()}: let go completely\n"
+                    : "Two A320 sticks   trigger+S = this stick is LEFT, S = swap   trigger+C = calibrate this stick, C = both   trigger = drive/dig\n";
         string Line(Side s) =>
-            $"{s.name.ToUpper()}: {s.dev.displayName} [{s.model}{(s.haveCal ? ", calibrated" : "")}]  x {s.fx:+0.00;-0.00}  y {s.fy:+0.00;-0.00}" +
-            $"{(s.trigger != null && s.trigger.isPressed ? "  TRIGGER" : "")}\n";
+            $"{s.name.ToUpper()}: {s.dev.displayName}{(Serial(s.dev) != "" ? " #" + Serial(s.dev) : "")} [{(s.haveCal ? "calibrated" : "default calibration")}]" +
+            $"  x {s.fx:+0.00;-0.00}  y {s.fy:+0.00;-0.00}{(s.trigger != null && s.trigger.isPressed ? "  TRIGGER" : "")}\n";
         return head + Line(L) + Line(R) + "Left: X swing, Y arm   Right: X bucket, Y boom   Drive: left Y / right Y = tracks";
     }
 }

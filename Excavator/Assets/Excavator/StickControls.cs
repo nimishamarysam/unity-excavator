@@ -12,6 +12,8 @@ using UnityEngine.InputSystem.Controls;
 // The F310 gamepad and the keyboard are NOT part of the study setup, but they keep working in the background
 // (for testing at home) unless BlockGamepadKeyboard is ticked (ExcavatorController inspector).
 // With no joystick connected everything uses the F310 + keyboard as before.
+// Only Thrustmaster TCA Sidestick Airbus (A320) sticks count as joysticks (FlightStickInput.OnlyA320, default on):
+// other joysticks, wheels, pedals or throttles that are plugged in are ignored and do not switch on joystick mode.
 //
 // Joystick buttons (numbers as in Windows "Set up USB game controllers"; change them below if needed):
 //   Trigger (1)        single stick: TAP = DRIVE/DIG mode, HOLD + forward/back = arm

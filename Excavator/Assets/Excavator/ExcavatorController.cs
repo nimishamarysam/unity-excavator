@@ -121,7 +121,11 @@ public class ExcavatorController : MonoBehaviour
     public bool useFlightStick = true;
     [Tooltip("Joystick connected: ignore the F310 gamepad and keyboard completely (strict lab setting). Off = they still work (home testing) but are not mentioned on screen.")]
     public bool blockGamepadKeyboard = false;
-    [Tooltip("Auto picks a Thrustmaster TCA if connected, otherwise a WingMan, otherwise any joystick.")]
+    [Tooltip("Use ONLY Thrustmaster TCA Sidestick Airbus (A320) sticks as left / right joysticks; all other joysticks, wheels, pedals and throttles are ignored.")]
+    public bool onlyA320Sticks = true;
+    [Tooltip("Words that identify an A320 stick in its device name (any of them, separated by ';'). See the Console: every joystick is listed as USED or IGNORED.")]
+    public string a320NameMatch = "sidestick;airbus;a320";
+    [Tooltip("Auto picks a Thrustmaster TCA if connected, otherwise a WingMan, otherwise any joystick (only A320 sticks when 'Only A320 Sticks' is on).")]
     public FlightStickChoice flightStick = FlightStickChoice.Auto;
     [Tooltip("Auto: two sticks connected = gamepad-style two-stick layout, one stick = single-stick layout.")]
     public StickLayout stickLayout = StickLayout.Auto;
@@ -171,6 +175,8 @@ public class ExcavatorController : MonoBehaviour
     void Awake()
     {
         StickControls.Enabled = useFlightStick;
+        FlightStickInput.OnlyA320 = onlyA320Sticks;
+        if (!string.IsNullOrEmpty(a320NameMatch)) FlightStickInput.A320NameMatch = a320NameMatch;
         StickControls.Layout = stickLayout;
         StickControls.AllowExperimenterKeyboard = experimenterKeyboard;
         StickControls.BlockGamepadKeyboard = blockGamepadKeyboard;
