@@ -24,6 +24,8 @@ using UnityEngine;
 // ONE DISPLAY (ContextViewsOnSeparateDisplay = false, or a build with fewer than 5 displays connected):
 //   the previous layout - driver view on the left, the camera windows stacked in a panel on the right.
 //
+// Display 1 in a build: a borderless 1920 x 720 window pinned to the top of the monitor (TopAnchoredWindow.cs),
+// so the layout above fills that window, not the whole monitor.
 // Display numbers: Unity counts from 0, so "Display 1" = 0 and "Display 5" = 4.
 // In the Editor: open a second Game view and set it to "Display 5" to see the context views.
 // In a build: Display 5 is activated automatically when Windows reports at least 5 monitors.
@@ -96,6 +98,9 @@ public class StudyLayout : MonoBehaviour
 
     void Awake()
     {
+        // Display 1 (build): borderless 1920 x 720 window at the top-left of the monitor (see TopAnchoredWindow).
+        if (GetComponent<TopAnchoredWindow>() == null) gameObject.AddComponent<TopAnchoredWindow>();
+
         // In a build, the extra monitor must be switched on once (Display 1 is always on).
         if (ContextViewsOnSeparateDisplay && !Application.isEditor)
         {
