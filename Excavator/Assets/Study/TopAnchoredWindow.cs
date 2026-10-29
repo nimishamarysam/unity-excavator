@@ -4,8 +4,8 @@ using System.Runtime.InteropServices;
 using UnityEngine;
 
 // ---------------------------------------------------------------------------
-// DISPLAY 1 WINDOW: borderless, WindowWidth x WindowHeight (default 1920 x 720),
-// pinned to the TOP-LEFT corner of the monitor (instead of a fullscreen image centred on it).
+// DISPLAY 1 WINDOW: borderless, WindowWidth x WindowHeight (default 1920 x 720), placed on the monitor
+// according to Anchor (default CENTER of the monitor; also TopLeft, TopCenter).
 //
 // Because the window itself is 1920 x 720, Screen.width / Screen.height are 1920 / 720 and the whole
 // Display 1 layout (driver view, measurement bar, task panel, practice instructions, briefing screens)
@@ -22,6 +22,22 @@ public class TopAnchoredWindow : MonoBehaviour
     public static int WindowWidth = 1920;
     public static int WindowHeight = 720;
 
+    public enum WindowAnchor { TopLeft, TopCenter, Center }
+    // Where the window sits on the monitor.
+    public static WindowAnchor Anchor = WindowAnchor.TopCenter;
+
+    // Top-left corner of the window for a monitor with the given position and size.
+    static Vector2Int Corner(int monX, int monY, int monW, int monH)
+    {
+        int cx = monX + (monW - WindowWidth) / 2, cy = monY + (monH - WindowHeight) / 2;
+        switch (Anchor)
+        {
+            case WindowAnchor.TopLeft: return new Vector2Int(monX, monY);
+            case WindowAnchor.TopCenter: return new Vector2Int(cx, monY);
+            default: return new Vector2Int(cx, cy);
+        }
+    }
+
     IEnumerator Start()
     {
         if (!Enabled || Application.isEditor) yield break;
@@ -32,7 +48,7 @@ public class TopAnchoredWindow : MonoBehaviour
         Place();
         yield return new WaitForSecondsRealtime(0.5F);
         Place();                                 // once more, in case Unity re-applied its own style
-        Debug.Log($"[TopAnchoredWindow] Display 1 window {Screen.width} x {Screen.height}, borderless, top-left");
+        Debug.Log($"[TopAnchoredWindow] Display 1 window {Screen.width} x {Screen.height}, borderless, anchor {Anchor}");
     }
 
 #if UNITY_STANDALONE_WIN
@@ -55,10 +71,15 @@ public class TopAnchoredWindow : MonoBehaviour
         IntPtr hwnd = GetActiveWindow();
         if (hwnd == IntPtr.Zero) { Debug.LogWarning("[TopAnchoredWindow] Window handle not found (application not in focus?)"); return; }
 
-        // Top-left corner of the monitor the window is on (Display 1).
+        // Position on the monitor the window is on (Display 1), according to Anchor.
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
         int x = 0, y = 0;
-        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), ref mi)) { x = mi.rcMonitor.left; y = mi.rcMonitor.top; }
+        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), ref mi))
+        {
+            var r = mi.rcMonitor;
+            var c = Corner(r.left, r.top, r.right - r.left, r.bottom - r.top);
+            x = c.x; y = c.y;
+        }
 
         SetWindowLongPtr(hwnd, GWL_STYLE, new IntPtr(WS_POPUP | WS_VISIBLE));   // no title bar, no border
         SetWindowPos(hwnd, IntPtr.Zero, x, y, WindowWidth, WindowHeight, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
@@ -66,8 +87,9 @@ public class TopAnchoredWindow : MonoBehaviour
 #else
     void Place()
     {
-        // Other platforms: move the window to the top-left corner; the border cannot be removed from here.
-        Screen.MoveMainWindowTo(Screen.mainWindowDisplayInfo, Vector2Int.zero);
+        // Other platforms: move the window (position relative to the display); the border cannot be removed from here.
+        var d = Screen.mainWindowDisplayInfo;
+        Screen.MoveMainWindowTo(d, Corner(0, 0, d.width, d.height));
     }
 #endif
 }
