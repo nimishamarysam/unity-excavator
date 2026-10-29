@@ -3,7 +3,7 @@ using UnityEngine;
 // ---------------------------------------------------------------------------
 // STUDY SCREEN LAYOUT (identical in all three conditions)
 //
-// TWO DISPLAYS (default, ContextViewsOnSeparateDisplay = true):
+// TWO DISPLAYS (ContextViewsOnSeparateDisplay = true; currently OFF - see ONE DISPLAY below):
 //
 //   DISPLAY 1 (driver)                          DISPLAY 5 (context-aware views, C2/C3), 2560 x 1080
 //   +------------------------------------+      +-----------+-----------+-----------+
@@ -25,7 +25,7 @@ using UnityEngine;
 //   Change the monitor with InstructionDisplayIndex below. Without that monitor (build) or with the switch off,
 //   they are drawn on Display 1 as before (practice instructions over the right-hand part of the driver view).
 //
-// ONE DISPLAY (ContextViewsOnSeparateDisplay = false, or a build with fewer than 5 displays connected):
+// ONE DISPLAY (default now: ContextViewsOnSeparateDisplay = false, or a build with fewer than 5 displays connected):
 //   the previous layout - driver view on the left, the camera windows stacked in a panel on the right.
 //
 // Display 1 in a build: a borderless 1920 x 720 window pinned to the top of the monitor (TopAnchoredWindow.cs),
@@ -44,7 +44,8 @@ public class StudyLayout : MonoBehaviour
     public const float Gap = 0.006F;
 
     // EXPERIMENT SWITCH: context-aware views on their own display (Display 5) and a full-width driver view on Display 1.
-    public static bool ContextViewsOnSeparateDisplay = true;
+    // false = context views back on Display 1, stacked vertically in the right-hand panel (current lab setup).
+    public static bool ContextViewsOnSeparateDisplay = false;
     public const int DriverDisplayIndex = 0;          // Display 1
     public const int ContextDisplayIndex = 4;         // Display 5
     // EXPERIMENT SWITCH: participant instructions and guidance on their own display (see InstructionDisplay.cs).
