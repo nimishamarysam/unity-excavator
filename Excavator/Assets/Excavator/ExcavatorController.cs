@@ -113,17 +113,29 @@ public class ExcavatorController : MonoBehaviour
     // The StudyManager turns this off so participants cannot trigger them by accident.
     public static bool AutonomousDemoEnabled = true;
 
-    // Where the controls come from. A flight stick (Thrustmaster TCA or WingMan) drives everything,
-    // and the F310 + keyboard keep working alongside it (see FlightStickInput.cs).
+    // Where the controls come from. While a flight stick (Thrustmaster TCA or WingMan) is connected, the study
+    // texts name only the joystick controls. The F310 + keyboard keep working alongside it for testing at home,
+    // unless 'Block Gamepad Keyboard' is ticked (see FlightStickInput.cs and StickControls.cs).
     [Header("Flight stick")]
-    [Tooltip("Read a flight stick in addition to the F310 gamepad and keyboard.")]
+    [Tooltip("Use a flight stick when one is connected. All study texts then name only the joystick controls.")]
     public bool useFlightStick = true;
+    [Tooltip("Joystick connected: ignore the F310 gamepad and keyboard completely (strict lab setting). Off = they still work (home testing) but are not mentioned on screen.")]
+    public bool blockGamepadKeyboard = false;
     [Tooltip("Auto picks a Thrustmaster TCA if connected, otherwise a WingMan, otherwise any joystick.")]
     public FlightStickChoice flightStick = FlightStickChoice.Auto;
     [Tooltip("Auto: two sticks connected = gamepad-style two-stick layout, one stick = single-stick layout.")]
     public StickLayout stickLayout = StickLayout.Auto;
     [Tooltip("Show live stick values at the bottom of the screen (always shown while calibrating).")]
     public bool showFlightStickDebug = true;
+    [Tooltip("Only with 'Block Gamepad Keyboard': keep the experimenter keyboard keys (Enter, P, End, N, C calibrate, S swap). They never move the machine.")]
+    public bool experimenterKeyboard = true;
+    [Tooltip("Joystick button numbers (1 = trigger), as in Windows 'Set up USB game controllers'. Check them with the live overlay ('pressed: ...').")]
+    public int confirmButton = 2;
+    public int pauseButton = 5;
+    public int endTrialButton = 6;
+    public int skipStepButton = 7;
+    [Tooltip("How the instructions name the confirm button, e.g. 'thumb button' or 'button 2'.")]
+    public string confirmButtonName = "thumb button";
     private IExcavatorInput input = new GamepadKeyboardInput();
     public IExcavatorInput InputSource { get => input; set => input = value; }
 
@@ -158,6 +170,16 @@ public class ExcavatorController : MonoBehaviour
 
     void Awake()
     {
+        StickControls.Enabled = useFlightStick;
+        StickControls.Layout = stickLayout;
+        StickControls.AllowExperimenterKeyboard = experimenterKeyboard;
+        StickControls.BlockGamepadKeyboard = blockGamepadKeyboard;
+        StickControls.ConfirmButton = confirmButton;
+        StickControls.PauseButton = pauseButton;
+        StickControls.EndTrialButton = endTrialButton;
+        StickControls.SkipStepButton = skipStepButton;
+        if (!string.IsNullOrEmpty(confirmButtonName)) StickControls.ConfirmName = confirmButtonName;
+
         if (useFlightStick && input is GamepadKeyboardInput)
         {
             var combined = new GamepadAndStickInput();
@@ -218,7 +240,7 @@ public class ExcavatorController : MonoBehaviour
 
         //--- Code for autonomous operations from this line ---
 
-        if (AutonomousDemoEnabled && !excavator.isInAutonomousDriving)
+        if (AutonomousDemoEnabled && !excavator.isInAutonomousDriving && !StickControls.GamepadKeyboardBlocked)
         {
             if (Keyboard.current != null && Keyboard.current.digit1Key.isPressed)
             {

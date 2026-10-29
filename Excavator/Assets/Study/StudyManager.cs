@@ -24,6 +24,10 @@ using UnityEngine.SceneManagement;
 //   X  = end the current trial early (also while paused)
 //   setup screen: LB / RB = participant number -1 / +1, Y = practice trial on/off
 //   Start = pause / resume
+// Joystick connected (StickControls.Active): the screens name only the joystick, and the same functions come
+//   from it: confirm button (default 2) = A, button 5 = Start (pause), button 6 = X (end trial),
+//   hat left/right = participant number, hat up = practice on/off. See StickControls.cs.
+//   The gamepad + keyboard still work for testing unless 'Block Gamepad Keyboard' is ticked.
 // ---------------------------------------------------------------------------
 
 public class StudyManager : MonoBehaviour
@@ -157,15 +161,18 @@ public class StudyManager : MonoBehaviour
 
     void Update()
     {
-        var kb = Keyboard.current;
-        var pad = Gamepad.current;
+        // Joystick or gamepad; the gamepad is null only when blocked (StickControls.cs).
+        var kb = StickControls.ExperimenterKeyboard;
+        var pad = StickControls.Pad;
+        bool stick = StickControls.Active;
         bool enter = kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame);
-        bool padA = pad != null && pad.buttonSouth.wasPressedThisFrame;
-        bool pause = (kb != null && kb.pKey.wasPressedThisFrame) || (pad != null && pad.startButton.wasPressedThisFrame);
+        bool padA = StickControls.ConfirmPressed();                     // gamepad A or the joystick confirm button
+        bool pause = (kb != null && kb.pKey.wasPressedThisFrame) || StickControls.PausePressed();
         bool abort = kb != null && kb.endKey.wasPressedThisFrame;
 
-        bool padX = pad != null && pad.buttonWest.wasPressedThisFrame;   // end trial
-        if (padX && (CurrentState == State.Running || CurrentState == State.Paused)) StudyLogger.Log("experimenter_gamepad", "X_end_trial");
+        bool padX = StickControls.EndTrialPressed();                    // end trial (gamepad X / joystick button)
+        if (padX && (CurrentState == State.Running || CurrentState == State.Paused))
+            StudyLogger.Log(stick ? "experimenter_joystick" : "experimenter_gamepad", "X_end_trial");
 
         switch (CurrentState)
         {
@@ -176,6 +183,13 @@ public class StudyManager : MonoBehaviour
                     if (pad.rightShoulder.wasPressedThisFrame) participantText = Mathf.Max(1, pid + 1).ToString();
                     if (pad.leftShoulder.wasPressedThisFrame) participantText = Mathf.Max(1, pid - 1).ToString();
                     if (pad.buttonNorth.wasPressedThisFrame) includePractice = !includePractice;
+                }
+                if (stick)
+                {
+                    int.TryParse(participantText, out int pid);
+                    if (StickControls.HatRight()) participantText = Mathf.Max(1, pid + 1).ToString();
+                    if (StickControls.HatLeft()) participantText = Mathf.Max(1, pid - 1).ToString();
+                    if (StickControls.HatUp()) includePractice = !includePractice;
                 }
                 if (enter || padA) BeginSession();
                 break;
@@ -260,7 +274,9 @@ public class StudyManager : MonoBehaviour
                 GUILayout.Space(10);
                 GUILayout.Label("Data folder: " + StudyLogger.Instance.FolderPath, normal);
                 GUILayout.Space(20);
-                GUILayout.Label("Gamepad: LB / RB = participant number,  Y = practice on/off,  A = start", normal);
+                GUILayout.Label(StickControls.Active
+                    ? $"Joystick: hat left / right = participant number,  hat up = practice on/off,  {StickControls.ConfirmName} = start"
+                    : "Gamepad: LB / RB = participant number,  Y = practice on/off,  A = start", normal);
                 if (GUILayout.Button("Start session  (Enter)", GUILayout.Height(44))) BeginSession();
                 break;
 
@@ -278,12 +294,12 @@ public class StudyManager : MonoBehaviour
                 GUILayout.Label("Task: " + StudyDesign.ScenarioLabel(t.scenario), normal);
                 GUILayout.Label(StudyDesign.ScenarioBriefing(t.scenario), normal);
                 GUILayout.FlexibleSpace();
-                GUILayout.Label("Press A on the gamepad when you are ready to start.", big);
+                GUILayout.Label(StickControls.PressConfirm + " when you are ready to start.", big);
                 break;
 
             case State.Paused:
                 GUILayout.Label("Paused", big);
-                GUILayout.Label("Press Start (gamepad) or P to continue.", normal);
+                GUILayout.Label($"Press {StickControls.PauseLabel} or P to continue.", normal);
                 break;
 
             case State.Questionnaire:
@@ -297,7 +313,7 @@ public class StudyManager : MonoBehaviour
                     GUILayout.Label("Next, you will start the actual tasks. Before each task you will see a short description of what to do. " +
                                     "Take your time to read it, and work carefully - try to avoid incidents.", normal);
                     GUILayout.FlexibleSpace();
-                    GUILayout.Label("Press A on the gamepad when you are ready to continue.", normal);
+                    GUILayout.Label(StickControls.PressConfirm + " when you are ready to continue.", normal);
                 }
                 else
                 {
@@ -305,7 +321,7 @@ public class StudyManager : MonoBehaviour
                     GUILayout.Space(10);
                     GUILayout.Label("Please fill in the SIM-TLX and SART questionnaires for this task.", normal);
                     GUILayout.FlexibleSpace();
-                    GUILayout.Label("Experimenter: press A on the gamepad (or Enter) to continue.", normal);
+                    GUILayout.Label("Experimenter: " + StickControls.PressConfirm.ToLower() + " (or Enter) to continue.", normal);
                 }
                 break;
 

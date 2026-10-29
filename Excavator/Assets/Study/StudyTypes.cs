@@ -125,12 +125,12 @@ public static class StudyDesign
                        "Phase 1 - Basic controls: one control at a time - switching between DRIVE and DIG mode, driving and turning, " +
                        "and the boom, arm, bucket and swing. Hold each control until its bar is full. Then a short explanation of the screen.\n\n" +
                        "Phase 2 - Digging and dumping: dig soil from the BROWN square and dump it on the WHITE square, step by step.\n\n" +
-                       "Phase 3 - Free practice: practise on your own. Hold A when you are ready to start the tasks " +
+                       $"Phase 3 - Free practice: practise on your own. {StickControls.HoldConfirm} when you are ready to start the tasks " +
                        "(the practice ends after 3 minutes at the latest).";
             case StudyScenario.Easy_Driving:
                 return "Goal: drive through the 4 gates in order, then reverse to the yellow stop line.\n\n" +
-                       "1. Drive forward: push both travel levers forward and pass through gates 1, 2, 3 and 4 in order.\n" +
-                       "2. Reverse: after gate 4, pull both travel levers back. The machine moves backwards while the cab " +
+                       $"1. Drive forward: {StickControls.DriveForward} and pass through gates 1, 2, 3 and 4 in order.\n" +
+                       $"2. Reverse: after gate 4, {StickControls.DriveBack}. The machine moves backwards while the cab " +
                        "keeps facing forward - do NOT swing the cab around.\n" +
                        "3. Stop when the middle of the machine is on the yellow stop line.\n\n" +
                        "Do not touch the gates, obstacles or people.";
@@ -141,10 +141,10 @@ public static class StudyDesign
                 return "Goal: load the truck 4 times within 6 minutes. The truck is out of reach from the pit, so you drive between them.\n\n" +
                        "For each load:\n" +
                        "1. Dig: from the DIG box, fill the bucket from the brown pit in front of you.\n" +
-                       "2. Reverse to the DUMP box: pull both travel levers back. The machine moves backwards while the cab keeps " +
+                       $"2. Reverse to the DUMP box: {StickControls.DriveBack}. The machine moves backwards while the cab keeps " +
                        "facing the pit - do NOT swing the cab around. Follow the lane: it bends right, then left, around the barriers.\n" +
                        "3. Dump: in the DUMP box, swing the cab LEFT to the truck and empty the bucket into the truck bed.\n" +
-                       "4. Drive forward: push both travel levers forward to return along the lane to the DIG box.\n\n" +
+                       $"4. Drive forward: {StickControls.DriveForward} to return along the lane to the DIG box.\n\n" +
                        "Do not hit the barriers, the truck or the workers. A water pipe crosses under the pit between the yellow posts - do not dig into it. " +
                        "A LOW power line runs along the far side of the truck - do not lift the bucket too high or reach too far over the truck. " +
                        "While working, a small map in the task panel shows where you are and where to go next.";

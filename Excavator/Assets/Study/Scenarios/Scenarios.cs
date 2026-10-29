@@ -8,7 +8,7 @@ using UnityEngine;
 // ---------------------------------------------------------------------------
 
 // PRACTICE (run by PracticeGuide, instructions in the right panel), three phases:
-//   1 basic controls   2 digging and dumping (guided)   3 free practice (hold A when ready, or time limit).
+//   1 basic controls   2 digging and dumping (guided)   3 free practice (hold A / joystick confirm button when ready, or time limit).
 // The bucket is solid during phase 1 (cutting edges off: it stops on the ground). When phase 2 starts,
 // BuildDigSite() switches digging on in a large square around the machine: NO marked dig or dump area
 // (so the practice does not look like the digging scenario) - dig anywhere, dump anywhere. No hazards.
@@ -34,7 +34,7 @@ public class PracticeScenario : Scenario
         get
         {
             if (guide != null && !guide.Done) return "Follow the instructions on the right.";
-            string text = "Practise on your own. Hold A when you are ready to start the tasks.";
+            string text = $"Practise on your own. {StickControls.HoldConfirm} when you are ready to start the tasks.";
             if (siteBuilt) text += $"  Dumps: {Dumps}";
             if (SM != null)
             {
@@ -97,8 +97,8 @@ public class DrivingScenario : Scenario
 
     public override string TaskText => reversing ? "Reverse to the yellow stop line" : "Drive forward through the gates in order";
     public override string ProgressText => reversing
-        ? "Pull both travel levers back to reverse. The cab keeps facing forward - do not swing it around.\nStop when the middle of the machine is on the yellow line."
-        : $"Next: gate {nextGate + 1} of {gates.Length}. Push both travel levers forward; steer around obstacles and people.";
+        ? $"{StickControls.Cap(StickControls.DriveBack)} to reverse. The cab keeps facing forward - do not swing it around.\nStop when the middle of the machine is on the yellow line."
+        : $"Next: gate {nextGate + 1} of {gates.Length}. {StickControls.Cap(StickControls.DriveForward)}; steer around obstacles and people.";
 
     protected override void Build()
     {
@@ -263,14 +263,14 @@ public class DiggingScenario : Scenario
     Hazard.Level pipeLevel, cableLevel;
 
     public override string TaskText => arrived ? $"Dig the trench between the stakes to {TargetDepth:0.0} m deep"
-                                               : "Drive into the yellow box (press B for travel mode)";
+                                               : $"Drive into the yellow box ({StickControls.ModeSwitch} for travel mode)";
     public override Vector3? DumpTarget => spoil;
     public override float? DigTargetDepth => TargetDepth;
     public override bool DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid) { c = spoil; fw = f; len = wid = SpoilSize; return true; }
     public override string ProgressText => arrived
         ? $"Trench done: {TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
           "Dump soil ONLY on the small white square. Avoid the orange cable and the yellow pipe markers."
-        : "Then press B again for digging mode.";
+        : $"Then {StickControls.ModeSwitch} again for digging mode.";
 
     public override System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse)
     {
@@ -547,7 +547,7 @@ public class DigDumpScenario : Scenario
             bool atDig = new Vector2(c.x - digPos.x, c.z - digPos.z).magnitude < 1.5F;
             string next;
             if (loaded && atDump)  next = "Swing the cab LEFT to the truck and empty the bucket into the truck bed.";
-            else if (loaded)       next = "REVERSE to the DUMP box: pull both travel levers back. The cab keeps facing the pit - do not swing it. The lane bends right, then left.";
+            else if (loaded)       next = $"REVERSE to the DUMP box: {StickControls.DriveBack}. The cab keeps facing the pit - do not swing it. The lane bends right, then left.";
             else if (atDig)        next = "Fill the bucket from the brown pit in front of you.";
             else                   next = "Drive FORWARD along the lane back to the DIG box.";
             return $"Loads: {loads} / {Goal}      Time left: {Mathf.FloorToInt(remaining / 60)}:{Mathf.FloorToInt(remaining % 60):00}\nNext: {next}";

@@ -31,6 +31,14 @@ using UnityEngine.InputSystem;
 // The instructions are drawn in the right-hand camera panel (empty in the practice trial, which runs in C1).
 //
 // Experimenter: gamepad Select/Back or keyboard N = skip the current step (logged).
+//
+// JOYSTICK: while a flight stick is connected the texts name only the joystick (the gamepad and keyboard still
+//   work for testing unless StickControls.BlockGamepadKeyboard is on; see StickControls.cs).
+//   "A" becomes the joystick confirm button, "B" the trigger (single stick: tap; two sticks: either trigger),
+//   Select = joystick button 7. With ONE stick the texts and diagrams change to the single-stick mapping
+//   (drive = stick forward/back + steer, boom = stick Y, arm = trigger + stick Y, bucket = twist, swing = stick X);
+//   with TWO sticks they stay as for the gamepad (same layout). The steps check the machine inputs
+//   (tracks, boom, arm, bucket, swing), so the completion rules are the same for every device.
 // Logged events: guide_step_start, guide_step_done (took / held / wrong-input seconds), guide_step_skipped,
 //                guide_step_back (phase 2: soil lost), guide_complete, practice_ready.
 // ---------------------------------------------------------------------------
@@ -78,6 +86,10 @@ public class PracticeGuide : MonoBehaviour
     class Step
     {
         public string id, title, how, keys;
+        public string how1;                       // single flight stick: text used instead of 'how' (null = same)
+        public Vector2 target1;                   // single flight stick: target stick position for the diagram
+        public float twist1;                      // single flight stick: target twist (bucket), 0 = no twist step
+        public bool trigger1;                     // single flight stick: trigger must be held (arm)
         public int phase = 1;
         public Kind kind;
         public Area area;
@@ -126,6 +138,8 @@ public class PracticeGuide : MonoBehaviour
         // ---------------- PHASE 1: basic controls ----------------
         steps.Add(new Step { id = "mode_drive", kind = Kind.ModeDrive, title = "Switch to DRIVE mode",
             how = "Press the B button on the gamepad.\nThe DRIVE icon (tracks, top right) turns green. In DRIVE mode the two sticks move the two tracks.",
+            how1 = "Tap the trigger (press it and let go quickly).\nThe DRIVE icon (tracks, top right) turns green. In DRIVE mode the stick drives the machine: " +
+                   "forward / back = drive, left / right = steer.",
             keys = "Gamepad B" });
 
         AddDrive("drive_fwd", "Drive forward",
@@ -155,6 +169,8 @@ public class PracticeGuide : MonoBehaviour
 
         steps.Add(new Step { id = "mode_dig", kind = Kind.ModeDig, title = "Switch to DIG mode",
             how = "Press the B button again.\nThe DIG icon (bucket, top right) turns green. In DIG mode the sticks move the boom, arm, bucket and cab.",
+            how1 = "Tap the trigger again.\nThe DIG icon (bucket, top right) turns green. In DIG mode the stick moves the boom (forward / back) " +
+                   "and the cab (left / right), trigger + stick moves the arm, and twisting the grip moves the bucket.",
             keys = "Gamepad B" });
 
         // Operation mode mapping (ISO): left stick X = swing, left Y = arm, right X = bucket, right Y = boom.
@@ -239,7 +255,51 @@ public class PracticeGuide : MonoBehaviour
             () => site.Dumps > dumpsAtStepStart,
             () => $"Bucket load: {Mathf.RoundToInt(site.Load.Fill * 100F)} %",
             null, null, null, null);
+
+        AddSingleStickTexts();
     }
+
+    // ONE flight stick: instructions and diagram targets. The completion checks stay the same
+    // (they look at the machine inputs). Twist RIGHT = bucket open assumes the default twist direction;
+    // if it is the other way round, tick FlightStickInput.invertBucket and swap the two bucket texts.
+    void AddSingleStickTexts()
+    {
+        const float D = 0.7F;   // diagonal
+        void One(string id, string how, Vector2 target, float twist = 0F, bool trig = false)
+        {
+            var st = steps.Find(q => q.id == id);
+            if (st == null) return;
+            st.how1 = how; st.target1 = target; st.twist1 = twist; st.trigger1 = trig;
+        }
+        One("drive_fwd", "Push the stick straight forward. Both tracks drive forward.", new Vector2(0, 1));
+        One("drive_back", "Pull the stick straight back. Both tracks drive backward.", new Vector2(0, -1));
+        One("turn_left_fwd", "Push the stick forward AND to the LEFT (diagonally).\nThe right track drives, so the machine turns to the left.", new Vector2(-D, D));
+        One("turn_right_fwd", "Push the stick forward AND to the RIGHT (diagonally).\nThe left track drives, so the machine turns to the right.", new Vector2(D, D));
+        One("turn_right_back", "Pull the stick back AND to the RIGHT (diagonally).\nThe machine reverses and its rear swings to the RIGHT.", new Vector2(D, -D));
+        One("turn_left_back", "Pull the stick back AND to the LEFT (diagonally).\nThe machine reverses and its rear swings to the LEFT.", new Vector2(-D, -D));
+        One("boom_down", "Push the stick forward, WITHOUT the trigger. The boom lowers.", new Vector2(0, 1));
+        One("boom_up", "Pull the stick back, WITHOUT the trigger. The boom rises.", new Vector2(0, -1));
+        One("arm_out", "HOLD the trigger and push the stick forward. The arm reaches out, away from the cab.", new Vector2(0, 1), 0F, true);
+        One("arm_in", "HOLD the trigger and pull the stick back. The arm pulls in, towards the cab.", new Vector2(0, -1), 0F, true);
+        One("bucket_open", "TWIST the grip to the RIGHT. The bucket opens, as when dumping soil.", Vector2.zero, 1F);
+        One("bucket_curl", "TWIST the grip to the LEFT. The bucket curls in, as when scooping soil.", Vector2.zero, -1F);
+        One("swing_left", "Push the stick to the LEFT. The cab and arm turn to the left.", new Vector2(-1, 0));
+        One("swing_right", "Push the stick to the RIGHT. The cab and arm turn to the right.", new Vector2(1, 0));
+        var dump = steps.Find(q => q.id == "dump_open");
+        if (dump != null) dump.how1 = dump.how.Replace("(RIGHT stick right)", "(twist the grip to the right)");
+    }
+
+    // Instruction text for the device in use.
+    static string HowText(Step s)
+    {
+        if (StickControls.SingleStick && s.how1 != null) return s.how1;
+        if (StickControls.TwoSticks)
+            return s.how.Replace("Press the B button on the gamepad.", "Press and release the trigger on either stick.")
+                        .Replace("Press the B button again.", "Press and release a trigger again.");
+        return s.how;
+    }
+
+    GamepadAndStickInput StickInput => ctl != null ? ctl.InputSource as GamepadAndStickInput : null;
 
     void AddDrive(string id, string t, string how, string keys, Vector2 l, Vector2 r, Func<InputSnapshot, bool> ok)
         => steps.Add(new Step { id = id, kind = Kind.Drive, title = t, how = how, keys = keys, targetL = l, targetR = r, ok = ok });
@@ -282,12 +342,13 @@ public class PracticeGuide : MonoBehaviour
 
     void Update()
     {
-        var pad = Gamepad.current; var kb = Keyboard.current;
+        // Joystick or gamepad buttons; keyboard only for the experimenter keys (StickControls.cs).
+        var kb = StickControls.ExperimenterKeyboard;
 
-        // Phase 3: hold A to finish the practice.
+        // Phase 3: hold A (gamepad) / the confirm button (joystick) to finish the practice.
         if (FreeActive)
         {
-            bool aHeld = pad != null && pad.buttonSouth.isPressed;
+            bool aHeld = StickControls.ConfirmHeld();
             holdA = aHeld ? holdA + Time.unscaledDeltaTime : 0F;
             if (holdA >= HoldAToContinue)
             {
@@ -298,7 +359,7 @@ public class PracticeGuide : MonoBehaviour
         }
         if (!Active) return;
 
-        bool skip = (pad != null && pad.selectButton.wasPressedThisFrame) || (kb != null && kb.nKey.wasPressedThisFrame);
+        bool skip = StickControls.SkipStepPressed() || (kb != null && kb.nKey.wasPressedThisFrame);
         if (skip)
         {
             StudyLogger.Log("guide_step_skipped", $"{index + 1};{steps[index].id};held={steps[index].held:F1}");
@@ -308,7 +369,7 @@ public class PracticeGuide : MonoBehaviour
 
         // Info page: A (or Enter for the experimenter) continues, once the page has been up for InfoMinSeconds.
         var st = steps[index];
-        bool next = (pad != null && pad.buttonSouth.wasPressedThisFrame) || (kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame));
+        bool next = StickControls.ConfirmPressed() || (kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame));
         if (st.kind == Kind.Info && next && SM.TrialTime - st.startedAt >= InfoMinSeconds) CompleteStep();
     }
 
@@ -443,26 +504,31 @@ public class PracticeGuide : MonoBehaviour
         bool modeOk = s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig || needDrive == ctl.IsTravelMode;
         string badge = s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig
             ? "Now in " + (ctl.IsTravelMode ? "DRIVE" : "DIG") + " mode"
-            : "Mode needed: " + (needDrive ? "DRIVE" : "DIG") + (modeOk ? "   (OK)" : "   - press B");
+            : "Mode needed: " + (needDrive ? "DRIVE" : "DIG") + (modeOk ? "   (OK)" : "   - " + StickControls.ModeSwitch);
         Fill(new Rect(x, y, w, 30 * k), modeOk ? new Color(0.15F, 0.45F, 0.2F) : new Color(0.75F, 0.35F, 0.05F));
         GUI.Label(new Rect(x + 10 * k, y + 3 * k, w - 20 * k, 26 * k), badge, body);
         y += 42 * k;
 
         // Instructions.
-        float hh = body.CalcHeight(new GUIContent(s.how), w);
-        GUI.Label(new Rect(x, y, w, hh), s.how, body);
+        string how = HowText(s);
+        float hh = body.CalcHeight(new GUIContent(how), w);
+        GUI.Label(new Rect(x, y, w, hh), how, body);
         y += hh + 14 * k;
 
         if (s.kind == Kind.Task) { DrawTask(s, x, y, w, k, modeOk); return; }
 
-        // Stick diagrams (or the B button for the mode steps).
+        // Stick diagrams (or the B button / trigger for the mode steps).
         float d = Mathf.Min((w - 30 * k) / 2F, 170F * k);
         if (s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig)
         {
             var b = new Rect(x + (w - d) / 2F, y + 22 * k, d, d);
             Fill(b, new Color(0.8F, 0.15F, 0.12F));
-            GUI.Label(b, "B", bigCenter);
+            GUI.Label(b, StickControls.ModeBox, bigCenter);
             y += d + 34 * k;
+        }
+        else if (StickControls.SingleStick)
+        {
+            y = DrawSingleStick(s, x, y, w, d, k);
         }
         else
         {
@@ -496,7 +562,7 @@ public class PracticeGuide : MonoBehaviour
             bool showWrong = SM.TrialTime - s.startedAt >= HintGraceSeconds && wrongStreak >= WrongBeforeHint;
             string h = lastOk ? "Correct - keep holding."
                      : !showWrong ? ""
-                     : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. Press B to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
+                     : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. {StickControls.Cap(StickControls.ModeSwitch)} to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
                      : "Not quite - move the white dot onto the yellow target.";
             hint.normal.textColor = lastOk ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
             GUI.Label(new Rect(x, y, w, 60 * k), h, hint);
@@ -516,7 +582,7 @@ public class PracticeGuide : MonoBehaviour
         string h = SM.TrialTime < backMessageUntil ? backMessage
                  : lastOk ? "Good!"
                  : !settled ? ""
-                 : !modeOk ? "You are in DRIVE mode. Press B to switch to DIG mode."
+                 : !modeOk ? $"You are in DRIVE mode. {StickControls.Cap(StickControls.ModeSwitch)} to switch to DIG mode."
                  : s.hint != null ? s.hint() : "";
         hint.normal.textColor = lastOk ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
         GUI.Label(new Rect(x, y, w, 80 * k), h, hint);
@@ -541,11 +607,12 @@ public class PracticeGuide : MonoBehaviour
         y += 36 * k;
 
         float bs = 46F * k;
-        var a = new Rect(x, y, bs, bs);
+        float bw = ButtonBoxWidth(bs, k);
+        var a = new Rect(x, y, bw, bs);
         Fill(a, new Color(0.2F, 0.7F, 0.25F));
-        GUI.Label(a, "A", bigCenter);
+        GUI.Label(a, StickControls.ConfirmBox, bigCenter);
         hint.normal.textColor = Color.white;
-        GUI.Label(new Rect(x + bs + 14 * k, y, w - bs - 14 * k, bs), "Ready? Hold A to start the tasks", hint);
+        GUI.Label(new Rect(x + bw + 14 * k, y, w - bw - 14 * k, bs), $"Ready? {StickControls.HoldConfirm} to start the tasks", hint);
         y += bs + 8 * k;
         var bar = new Rect(x, y, w, 14 * k);
         Fill(bar, new Color(0.25F, 0.25F, 0.27F));
@@ -555,15 +622,18 @@ public class PracticeGuide : MonoBehaviour
     // Info page: text, "press A" at the bottom of the panel, and a pulsing yellow outline around the explained screen part.
     void DrawInfo(Step s, float x, float y, float w, Rect panel, float k)
     {
-        float hh = body.CalcHeight(new GUIContent(s.how), w);
-        GUI.Label(new Rect(x, y, w, hh), s.how, body);
+        string how = HowText(s);
+        float hh = body.CalcHeight(new GUIContent(how), w);
+        GUI.Label(new Rect(x, y, w, hh), how, body);
 
         bool ready = SM.TrialTime - s.startedAt >= InfoMinSeconds;
         float bs = 54F * k, by = panel.yMax - bs - 24F * k;
-        var a = new Rect(x, by, bs, bs);
+        float bw = ButtonBoxWidth(bs, k);
+        var a = new Rect(x, by, bw, bs);
         Fill(a, ready ? new Color(0.2F, 0.7F, 0.25F) : new Color(0.3F, 0.3F, 0.32F));
-        GUI.Label(a, "A", bigCenter);
-        GUI.Label(new Rect(x + bs + 16F * k, by, w - bs - 16F * k, bs), ready ? "Press A to continue" : "Read this first...", title);
+        GUI.Label(a, StickControls.ConfirmBox, bigCenter);
+        string cont = StickControls.Active ? $"Press the {StickControls.ConfirmName} to continue" : "Press A to continue";
+        GUI.Label(new Rect(x + bw + 16F * k, by, w - bw - 16F * k, bs), ready ? cont : "Read this first...", title);
 
         Rect target = AreaRect(s.area);
         if (target.width > 0F)
@@ -588,6 +658,51 @@ public class PracticeGuide : MonoBehaviour
                 return new Rect(0F, Screen.height - h, Screen.width, h);
             default: return Rect.zero;
         }
+    }
+
+    // Width of the green button box: square for "A", wider for a joystick label such as "THUMB".
+    float ButtonBoxWidth(float bs, float k) =>
+        Mathf.Max(bs, bigCenter.CalcSize(new GUIContent(StickControls.ConfirmBox)).x + 16F * k);
+
+    // ONE flight stick: a single stick diagram (or a twist bar for the bucket) and, in DIG mode, the trigger state.
+    float DrawSingleStick(Step s, float x, float y, float w, float d, float k)
+    {
+        var gi = StickInput;
+        Vector2 cur = gi != null ? gi.stick.StickOut : Vector2.zero;
+        float tw = gi != null ? gi.stick.TwistOut : 0F;
+        bool trig = gi != null && gi.stick.TriggerHeld;
+
+        if (s.twist1 != 0F)
+        {
+            // Twist bar: yellow target at the end to twist to, white dot = current twist.
+            GUI.Label(new Rect(x, y, w, 20 * k), "TWIST THE GRIP", center);
+            var bar = new Rect(x, y + 26 * k, w, 44 * k);
+            Fill(bar, new Color(0.16F, 0.17F, 0.19F));
+            Fill(new Rect(bar.center.x - 1, bar.y, 2, bar.height), new Color(0.32F, 0.33F, 0.35F));
+            float half = bar.width / 2F - 18F * k;
+            float ts = 30F * k, tx = bar.center.x + Mathf.Sign(s.twist1) * half;
+            Fill(new Rect(tx - ts / 2, bar.center.y - ts / 2, ts, ts), new Color(1F, 0.8F, 0.1F, 0.9F));
+            GUI.Label(new Rect(bar.x + 6 * k, bar.yMax + 2 * k, 120 * k, 20 * k), "< left", small);
+            GUI.Label(new Rect(bar.xMax - 60 * k, bar.yMax + 2 * k, 60 * k, 20 * k), "right >", small);
+            float cs = 14F * k, cx = bar.center.x + Mathf.Clamp(tw, -1F, 1F) * half;
+            Fill(new Rect(cx - cs / 2, bar.center.y - cs / 2, cs, cs), lastOk ? new Color(0.3F, 1F, 0.4F) : Color.white);
+            y += 26 * k + 44 * k + 30 * k;
+            GUI.Label(new Rect(x, y, w, 22 * k), "Keep the stick itself centred.", small);
+            return y + 26 * k;
+        }
+
+        var r = new Rect(x + (w - d) / 2F, y + 22 * k, d, d);
+        Stick(r, "STICK", s.target1, cur, k);
+        y += d + 34 * k;
+        if (s.kind == Kind.Dig)
+        {
+            string need = s.trigger1 ? "Trigger: HOLD it" : "Trigger: do NOT press";
+            bool good = trig == s.trigger1;
+            hint.normal.textColor = good ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
+            GUI.Label(new Rect(x, y - 6 * k, w, 24 * k), need + (trig ? "   (now: held)" : "   (now: not pressed)"), hint);
+            y += 22 * k;
+        }
+        return y;
     }
 
     static void Outline(Rect r, Color c, float t)

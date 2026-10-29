@@ -15,7 +15,8 @@ using UnityEngine.InputSystem.Controls;
 //   Twist (rotate grip)   = bucket
 //
 //   Trigger TAP (press + release within tapMaxSeconds without moving the arm)
-//   toggles travel / operation mode. The F310 B button also still toggles.
+//   toggles travel / operation mode. The F310 B button and the keyboard also still work
+//   (home testing) unless StickControls.BlockGamepadKeyboard is on.
 //
 // The throttle is NOT used: it does not spring back, so whatever it drove
 // would keep moving after the hand lets go.
@@ -56,6 +57,11 @@ public class FlightStickInput : IExcavatorInput
     bool boomLocked;
 
     float fx, fy, ftw;
+
+    // Last processed values (after calibration + dead zone), for the practice-guide diagrams.
+    public Vector2 StickOut { get; private set; }
+    public float TwistOut { get; private set; }
+    public bool TriggerHeld => trigger != null && trigger.isPressed;
 
     public string DeviceName => device != null ? device.displayName : "none";
     public bool IsConnected => Find() != null;
@@ -227,7 +233,8 @@ public class FlightStickInput : IExcavatorInput
     public bool ModeTogglePressedThisFrame()
     {
         if (Find() == null) return false;
-        if (Keyboard.current != null && Keyboard.current.cKey.wasPressedThisFrame && calPhase == 0) StartCalibration();
+        var kb = StickControls.ExperimenterKeyboard;
+        if (kb != null && kb.cKey.wasPressedThisFrame && calPhase == 0) StartCalibration();
         if (trigger == null) return false;
         if (trigger.wasPressedThisFrame) { triggerDownTime = Time.unscaledTime; armUsedDuringHold = false; }
         if (trigger.wasReleasedThisFrame)
@@ -248,7 +255,7 @@ public class FlightStickInput : IExcavatorInput
         float rawTw = twist != null ? twist.ReadValue() : 0F;
         lastRawX = rawX; lastRawY = rawY; lastRawTw = rawTw;
 
-        if (calPhase != 0) { UpdateCalibration(rawX, rawY, rawTw); fx = fy = ftw = 0F; return; }
+        if (calPhase != 0) { UpdateCalibration(rawX, rawY, rawTw); fx = fy = ftw = 0F; StickOut = Vector2.zero; TwistOut = 0F; return; }
 
         float k = smoothingSeconds > 0F ? 1F - Mathf.Exp(-Time.deltaTime / smoothingSeconds) : 1F;
         fx += (Apply(rawX, calX) - fx) * k;
@@ -257,10 +264,12 @@ public class FlightStickInput : IExcavatorInput
 
         float x = Dz(fx, stickDeadZone);
         float y = Dz(fy, stickDeadZone);
+        StickOut = new Vector2(x, y);
+        TwistOut = Mathf.Clamp(Dz(ftw, twistDeadZone) * twistScale, -1F, 1F);
 
         if (!travelMode)
         {
-            float tw = Mathf.Clamp(Dz(ftw, twistDeadZone) * twistScale, -1F, 1F);
+            float tw = TwistOut;
 
             bool armHeld = trigger != null && trigger.isPressed;
             if (armHeld)
@@ -294,31 +303,45 @@ public class FlightStickInput : IExcavatorInput
 
 public enum StickLayout { Auto, SingleStick, TwoSticks }
 
-// Keyboard + F310 + flight stick(s) together. The sticks are read last, so they win when moved.
+// F310 + keyboard and flight stick(s). The sticks are read last, so they win when moved.
+// The study texts name only the joystick while one is connected (StickControls.Active); the F310 + keyboard
+// keep working for testing at home, unless StickControls.BlockGamepadKeyboard is on (then joystick only).
 // Layout Auto: two sticks connected -> TwoSticks (gamepad-style), otherwise SingleStick.
 public class GamepadAndStickInput : IExcavatorInput
 {
     public readonly GamepadKeyboardInput gamepad = new GamepadKeyboardInput();
     public readonly FlightStickInput stick = new FlightStickInput();
     public readonly DualStickInput dual = new DualStickInput();
-    public StickLayout layout = StickLayout.Auto;
 
-    public bool UsingTwoSticks =>
-        layout == StickLayout.TwoSticks || (layout == StickLayout.Auto && DualStickInput.StickCount() >= 2);
+    public StickLayout layout
+    {
+        get => StickControls.Layout;
+        set => StickControls.Layout = value;
+    }
 
-    public bool IsCalibrating => UsingTwoSticks ? dual.IsCalibrating : stick.IsCalibrating;
-    public string DebugText() => UsingTwoSticks ? dual.DebugText() : stick.DebugText();
+    public bool UsingStick => StickControls.Active;
+    public bool UsingTwoSticks => StickControls.TwoSticks;
+
+    public bool IsCalibrating => UsingStick && (UsingTwoSticks ? dual.IsCalibrating : stick.IsCalibrating);
+    bool GamepadOn => !StickControls.GamepadKeyboardBlocked;
+
+    public string DebugText() =>
+        !UsingStick ? "No joystick connected: F310 gamepad + keyboard in use"
+        : (GamepadOn ? "JOYSTICK (gamepad + keyboard also active)   " : "JOYSTICK ONLY (gamepad + keyboard off)   ")
+          + (UsingTwoSticks ? dual.DebugText() : stick.DebugText());
 
     public bool ModeTogglePressedThisFrame()
     {
-        bool a = gamepad.ModeTogglePressedThisFrame();
+        bool a = GamepadOn && gamepad.ModeTogglePressedThisFrame();
+        if (!UsingStick) return a;
         bool b = UsingTwoSticks ? dual.ModeTogglePressedThisFrame() : stick.ModeTogglePressedThisFrame();
         return a || b;
     }
 
     public void Read(bool travelMode, InputEvents e)
     {
-        gamepad.Read(travelMode, e);
+        if (GamepadOn) gamepad.Read(travelMode, e);
+        if (!UsingStick) return;
         if (UsingTwoSticks) dual.Read(travelMode, e); else stick.Read(travelMode, e);
     }
 }

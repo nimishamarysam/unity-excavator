@@ -16,6 +16,7 @@ using UnityEngine.InputSystem.Controls;
 //
 //   Trigger on EITHER stick (press + release) toggles travel / operation mode,
 //   like the F310 B button. Twist and throttle are not used.
+//   The F310 and the keyboard still work alongside (home testing) unless StickControls.BlockGamepadKeyboard is on.
 //
 // Which stick is left: the overlay shows it. Press S on the keyboard to swap
 // (remembered). C calibrates both sticks at once: move both to every edge for
@@ -26,6 +27,10 @@ public class DualStickInput : IExcavatorInput
     public float deadZone = 0.08F;
     public float smoothingSeconds = 0.05F;
     public bool invertSwing, invertArm, invertBucket, invertBoom, invertTracks;
+
+    // Last processed values (after calibration + dead zone), for the practice-guide diagrams.
+    public Vector2 LeftOut { get; private set; }
+    public Vector2 RightOut { get; private set; }
 
     struct AxisCal { public float min, centre, max; }
     static AxisCal Def(float mn, float c, float mx) => new AxisCal { min = mn, centre = c, max = mx };
@@ -153,7 +158,7 @@ public class DualStickInput : IExcavatorInput
     public bool ModeTogglePressedThisFrame()
     {
         if (!Find()) return false;
-        var kb = Keyboard.current;
+        var kb = StickControls.ExperimenterKeyboard;
         if (kb != null && calPhase == 0)
         {
             if (kb.cKey.wasPressedThisFrame) StartCalibration();
@@ -182,9 +187,10 @@ public class DualStickInput : IExcavatorInput
         if (!Find()) return;
         float k = smoothingSeconds > 0F ? 1F - Mathf.Exp(-Time.deltaTime / smoothingSeconds) : 1F;
         ReadSide(L, k); ReadSide(R, k);
-        if (calPhase != 0) { UpdateCalibration(); L.fx = L.fy = R.fx = R.fy = 0F; return; }
+        if (calPhase != 0) { UpdateCalibration(); L.fx = L.fy = R.fx = R.fy = 0F; LeftOut = RightOut = Vector2.zero; return; }
 
         float lx = Dz(L.fx), ly = Dz(L.fy), rx = Dz(R.fx), ry = Dz(R.fy);
+        LeftOut = new Vector2(lx, ly); RightOut = new Vector2(rx, ry);
 
         if (!travelMode)
         {
