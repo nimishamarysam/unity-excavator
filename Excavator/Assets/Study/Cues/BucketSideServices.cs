@@ -59,6 +59,7 @@ public class BucketSideServices : MonoBehaviour
         own = new GameObject("BucketSideServices").transform;   // always active (also in C2)
         own.SetParent(transform, false);
         canvas = CueKit.MakeCanvas(own, "BucketSideServicesCanvas", 43);
+        StudyLayout.ToContextDisplay(canvas);   // widgets sit in the bucket side view (Display 5)
         Camera.onPreCull += PreCull;
         Camera.onPostRender += PostRender;
     }
@@ -207,7 +208,7 @@ public class BucketSideServices : MonoBehaviour
     {
         if (cam == null || reqs.Count == 0) return;
         Rect r = cam.rect;
-        float lineH = (ProximityWidget.Height + 4F) / Mathf.Max(1F, Screen.height);   // screen units
+        float lineH = (ProximityWidget.Height + 4F) / Mathf.Max(1F, StudyLayout.PixelHeight(cam.targetDisplay));   // display units
         reqs.Sort((ra, rb) => ra.dist.CompareTo(rb.dist));
         for (int i = 0; i < reqs.Count; i++)
         {

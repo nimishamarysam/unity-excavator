@@ -16,7 +16,8 @@ using UnityEngine.UI;
 // At most two pop-ups at a time (the two closest). Logged as popup_open / popup_close.
 //
 // DRIVING scenario (ContextViews.UseDrivingLayout): "docked" mode instead. ONE obstacle camera in
-// the bottom half of the right-hand panel (the driver view stays free). It appears when an obstacle
+// the right half of DISPLAY 5, next to the bird's-eye view (one-display layout: bottom half of the
+// right-hand panel); the driver view stays free. It appears when an obstacle
 // or worker comes within its opening distance, always shows the closest one (switches if another
 // becomes clearly closer), and disappears again when everything is far away. The label says what it
 // is, how far, and on which side of the machine.
@@ -140,6 +141,9 @@ public class PopupViews : MonoBehaviour
         p.cam.fieldOfView = 50F;
         p.cam.nearClipPlane = 0.2F;
         p.cam.cullingMask &= ~((1 << CueKit.BucketSideOnlyLayer) | (1 << CueKit.DriverOnlyLayer));
+        bool dock = docked || DockInPanel;
+        // Docked obstacle camera: with the other context views on Display 5. Floating pop-ups stay over the driver view.
+        p.cam.targetDisplay = dock ? StudyLayout.ContextDisplay : StudyLayout.DriverDisplayIndex;
 
         Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         p.frame = new GameObject("PopupFrame_" + h.hazardId);
@@ -147,6 +151,7 @@ public class PopupViews : MonoBehaviour
         var canvas = p.frame.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 45;
+        canvas.targetDisplay = p.cam.targetDisplay;
 
         var boxGo = new GameObject("Box", typeof(RectTransform));
         boxGo.transform.SetParent(p.frame.transform, false);

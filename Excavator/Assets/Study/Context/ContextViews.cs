@@ -3,19 +3,20 @@ using UnityEngine.UI;
 
 // ---------------------------------------------------------------------------
 // CONTEXT-AWARE CAMERA VIEWS  (conditions C2 and C3 only)
-// Three camera windows in the panel to the right of the driver view (see
-// StudyLayout). All three are always on during a trial; WHICH cameras they show
+// Three camera windows SIDE BY SIDE on DISPLAY 5 (left to right = slot 0, 1, 2); the driver view
+// is on Display 1. With StudyLayout.ContextViewsOnSeparateDisplay = false: the old panel to the right of
+// the driver view (top to bottom). All three are always on during a trial; WHICH cameras they show
 // depends on the operation:
 //
 //   Travel mode (driving or reversing):  BIRD'S-EYE | LEFT SIDE  | RIGHT SIDE
 //   Operation mode (digging, carrying,
 //   dumping):                            BIRD'S-EYE | OVER BUCKET | BUCKET SIDE
 //
-// Other scenarios in travel mode (with PopupStyleForDriving): the same two-part panel - bird's-eye view
-// in the top half, obstacle camera below it. In operation mode the three windows above are used.
+// Other scenarios in travel mode (with PopupStyleForDriving): the same two-part layout - bird's-eye view
+// in the left half of Display 5, obstacle camera in the right half. In operation mode the three windows above are used.
 //
-// DRIVING scenario (UseDrivingLayout): only ONE fixed window, the bird's-eye view in the top half
-// of the panel. The bottom half is the obstacle camera, shown by PopupViews only when something is close.
+// DRIVING scenario (UseDrivingLayout): only ONE fixed window, the bird's-eye view in the left half
+// of Display 5. The right half is the obstacle camera, shown by PopupViews only when something is close.
 //
 // Side cameras are fixed to the tracks and look down along each side of the machine.
 // Every window has a label so the participant knows what it shows.
@@ -108,8 +109,8 @@ public class ContextViews : MonoBehaviour
         {
             travelBirdsEye = MakeWindow("TravelTop", StudyLayout.PanelSlot(0, 2), 53);
             Show(travelBirdsEye, false);
-            Rect mid = StudyLayout.PanelSlot(1), bottom = StudyLayout.PanelSlot(2);
-            sideTall = MakeWindow("SideTall", new Rect(bottom.xMin, bottom.yMin, bottom.width, mid.yMax - bottom.yMin), 54);
+            // BUCKET SIDE VIEW over the middle + last slot (Display 5: one wide window on the right).
+            sideTall = MakeWindow("SideTall", StudyLayout.Join(StudyLayout.PanelSlot(1), StudyLayout.PanelSlot(2)), 54);
             Show(sideTall, false);
         }
     }
@@ -121,6 +122,7 @@ public class ContextViews : MonoBehaviour
         camGo.transform.SetParent(transform, false);
         w.cam = camGo.AddComponent<Camera>();
         w.cam.rect = r;
+        StudyLayout.ToContextDisplay(w.cam);   // Display 5 (or Display 1 in the one-display layout)
         w.cam.depth = depth;              // drawn on top of the operator's view
         w.cam.nearClipPlane = 0.2F;
         w.cam.cullingMask &= ~(1 << CueKit.DriverOnlyLayer);   // driver-view-only cues (teeth line)
@@ -131,6 +133,7 @@ public class ContextViews : MonoBehaviour
         var canvas = w.frame.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 40;
+        StudyLayout.ToContextDisplay(canvas);
 
         float t = 3F;
         w.edges[0] = Edge(w.frame, new Vector2(r.xMin, r.yMax), new Vector2(r.xMax, r.yMax), new Vector2(0, t), new Vector2(0, 0));

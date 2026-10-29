@@ -185,7 +185,7 @@ public static class CueKit
         Rect s = Rect.MinMaxRect(view.xMin + x0 * view.width, view.yMin + y0 * view.height,
                                  view.xMin + x1 * view.width, view.yMin + y1 * view.height);
         // Small padding, and a minimum size so far-away objects still get a readable box.
-        float padX = 6F / Mathf.Max(1, Screen.width), padY = 6F / Mathf.Max(1, Screen.height);
+        float padX = 6F / Mathf.Max(1F, StudyLayout.PixelWidth(cam.targetDisplay)), padY = 6F / Mathf.Max(1F, StudyLayout.PixelHeight(cam.targetDisplay));
         float minW = 0.025F, minH = 0.04F;
         float cx = s.center.x, cy = s.center.y;
         float w = Mathf.Max(s.width + 2 * padX, minW), h = Mathf.Max(s.height + 2 * padY, minH);

@@ -28,7 +28,8 @@ using UnityEngine.InputSystem;
 //
 // A control step (phase 1) counts as learned when the CORRECT control has been held for HoldFor(step) seconds
 // in total - it does not have to be in one go. Wrong-mode or wrong-stick input is not counted.
-// The instructions are drawn in the right-hand camera panel (empty in the practice trial, which runs in C1).
+// The instructions are drawn in the right-hand part of Display 1 (StudyLayout.GuidePanel), over the driver view;
+// the practice trial runs in C1, so there are no context-aware views on Display 5.
 //
 // Experimenter: gamepad Select/Back or keyboard N = skip the current step (logged).
 //
@@ -469,7 +470,7 @@ public class PracticeGuide : MonoBehaviour
         float k = Screen.height / 1080F;
         MakeStyles(k);
 
-        Rect slot = StudyLayout.PanelSlot(0, 1);   // whole right panel (viewport coords, y up)
+        Rect slot = StudyLayout.GuidePanel;        // right-hand part of Display 1 (viewport coords, y up)
         float top = 150F * k;                      // leave the mode icons (top right) visible
         var r = new Rect(slot.x * Screen.width, (1F - slot.yMax) * Screen.height + top,
                          slot.width * Screen.width, slot.height * Screen.height - top);

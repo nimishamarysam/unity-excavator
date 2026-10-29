@@ -256,7 +256,7 @@ public class UndergroundSideView : MonoBehaviour
             while (serviceRings.Count <= k)
             {
                 serviceRings.Add(CueKit.Line(own, "CueSectionService", 0.07F, true, false, CueKit.BucketSideOnlyLayer));
-                serviceLabels.Add(new ScreenBox(root.CanvasRoot, root.Font, "CueSectionServiceLabel", 16));
+                serviceLabels.Add(new ScreenBox(root.ContextCanvasRoot, root.Font, "CueSectionServiceLabel", 16));   // bucket side view (Display 5)
             }
             Color c = !Guidance ? new Color(0.75F, 0.75F, 0.78F)          // C2: just the object, no warning colours
                     : h.CurrentLevel == Hazard.Level.Contact ? CueKit.Danger

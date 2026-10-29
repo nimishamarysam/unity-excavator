@@ -39,7 +39,8 @@ public class AttentionCues : MonoBehaviour
     public Excavator M => Ctl != null ? Ctl.Machine : null;
     public Scenario Scenario { get; private set; }
     public Transform WorldRoot { get; private set; }    // parent of all 3D cue objects
-    public Transform CanvasRoot { get; private set; }   // parent of all driver-view cue objects
+    public Transform CanvasRoot { get; private set; }   // parent of all driver-view cue objects (Display 1)
+    public Transform ContextCanvasRoot { get; private set; }   // parent of cue labels over the context-aware views (Display 5)
     public Font Font { get; private set; }
     public ObstacleCues Obstacles { get; private set; }
     public DrivingCues Driving { get; private set; }
@@ -72,6 +73,10 @@ public class AttentionCues : MonoBehaviour
         w.transform.SetParent(transform, false);
         WorldRoot = w.transform;
         CanvasRoot = CueKit.MakeCanvas(transform, "CueCanvas", 42).transform;   // above the camera frames (40), below pop-up frames (45)
+        // Labels drawn over the CONTEXT-AWARE views (bucket side / bucket front view): on Display 5 with those views.
+        var ctxCanvas = CueKit.MakeCanvas(transform, "CueCanvasContext", 42);
+        StudyLayout.ToContextDisplay(ctxCanvas);
+        ContextCanvasRoot = ctxCanvas.transform;
 
         // The cab camera (and the machine's mirror/rear cameras) must not draw the context-only highlights.
         foreach (var cam in controller.Machine.transform.GetComponentsInChildren<Camera>(true))
@@ -90,6 +95,7 @@ public class AttentionCues : MonoBehaviour
 
         WorldRoot.gameObject.SetActive(false);
         CanvasRoot.gameObject.SetActive(false);
+        ContextCanvasRoot.gameObject.SetActive(false);
     }
 
     void OnDestroy() { if (Instance == this) Instance = null; }
@@ -101,6 +107,7 @@ public class AttentionCues : MonoBehaviour
         wasVisible = v;
         WorldRoot.gameObject.SetActive(v);
         CanvasRoot.gameObject.SetActive(v);
+        if (ContextCanvasRoot != null) ContextCanvasRoot.gameObject.SetActive(v);
         StudyLogger.Log(v ? "cues_enabled" : "cues_disabled");
     }
 

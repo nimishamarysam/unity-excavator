@@ -113,10 +113,10 @@ public class DiggingCues : MonoBehaviour
         int arrowLayer = r.Profile.heightArrowInDriverView ? 0 : side;
         heightArrow = CueKit.Line(w, "CueHeightArrow", 0.05F, true, false, arrowLayer);
         targetTick  = CueKit.Line(w, "CueTargetTick", 0.05F, true, false, arrowLayer);
-        heightText       = new ScreenBox(r.CanvasRoot, r.Font, "CueHeightLabel", 17);
+        heightText       = new ScreenBox(r.ContextCanvasRoot, r.Font, "CueHeightLabel", 17);       // bucket side view (Display 5)
         heightTextDriver = new ScreenBox(r.CanvasRoot, r.Font, "CueHeightLabelDriver", 17);
         depthGauge = new DepthGauge(r.CanvasRoot, r.Font);
-        angleText        = new ScreenBox(r.CanvasRoot, r.Font, "CueAngleLabel", 17);
+        angleText        = new ScreenBox(r.ContextCanvasRoot, r.Font, "CueAngleLabel", 17);        // bucket front / side view (Display 5)
         Camera.onPreCull += PreCull;
     }
 
