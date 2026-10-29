@@ -54,6 +54,10 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Measurement bar refresh rate | `refreshRateHz` | 10 Hz | `Study/MeasurementBar.cs` |
 | Which readouts are on the bar | `BuildUI()` (`Cell(...)` calls) | 9 readouts | `Study/MeasurementBar.cs` |
 | Task panel size (text, incidents, mini-map) | `textH`, `incH`, `mapW` (const) | 118, 26, 130 | `Study/Scenarios/Scenario.cs` |
+| Instructions and guidance (practice guide, task instruction screens, practice/task complete, pause) on their own display | `StudyLayout.InstructionsOnSeparateDisplay` (static switch) | `true` | `Study/StudyLayout.cs` |
+| **Which display shows the instructions** (0-based: Display 3 = 2) | `StudyLayout.InstructionDisplayIndex` (const) | `2` (Display 3) | `Study/StudyLayout.cs` |
+| Instruction display size in the Editor (a build uses the monitor's resolution) | `InstructionEditorWidth`, `InstructionEditorHeight` | 1920 × 1080 | `Study/StudyLayout.cs` |
+| Instructions upside down on the instruction display | `InstructionDisplay.FlipY` (static switch) | `false` | `Study/InstructionDisplay.cs` |
 
 ## 4. Context-aware views (C2 and C3)
 

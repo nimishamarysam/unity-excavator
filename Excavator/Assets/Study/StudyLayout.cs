@@ -18,8 +18,12 @@ using UnityEngine;
 //   about 850 x 360 pixels each (ContextAreaTop / ContextAreaHeight).
 //   DRIVING scenario / travel mode: two windows - left = BIRD'S-EYE VIEW, right = OBSTACLE CAMERA (pop-up).
 //   Display 5 stays dark in C1 and while no window is shown.
-//   Task panel, measurement bar, briefing screens and practice instructions stay on Display 1
-//   (the practice instructions are drawn over the right-hand part of the driver view).
+//   Task panel and measurement bar stay on Display 1.
+//
+// INSTRUCTION DISPLAY (InstructionsOnSeparateDisplay = true, default DISPLAY 3, see InstructionDisplay.cs):
+//   practice guide, task instruction (briefing) screens, practice/task complete and pause screens.
+//   Change the monitor with InstructionDisplayIndex below. Without that monitor (build) or with the switch off,
+//   they are drawn on Display 1 as before (practice instructions over the right-hand part of the driver view).
 //
 // ONE DISPLAY (ContextViewsOnSeparateDisplay = false, or a build with fewer than 5 displays connected):
 //   the previous layout - driver view on the left, the camera windows stacked in a panel on the right.
@@ -43,6 +47,13 @@ public class StudyLayout : MonoBehaviour
     public static bool ContextViewsOnSeparateDisplay = true;
     public const int DriverDisplayIndex = 0;          // Display 1
     public const int ContextDisplayIndex = 4;         // Display 5
+    // EXPERIMENT SWITCH: participant instructions and guidance on their own display (see InstructionDisplay.cs).
+    public static bool InstructionsOnSeparateDisplay = true;
+    // >>> INSTRUCTION DISPLAY NUMBER: 0-based, so Display 3 = 2 (Display 2 = 1, Display 4 = 3, ...). <<<
+    public const int InstructionDisplayIndex = 2;     // Display 3
+    // Size of the instruction display in the Editor (a build uses the monitor's own resolution).
+    public static int InstructionEditorWidth = 1920;
+    public static int InstructionEditorHeight = 1080;
     // Part of Display 5 used for the views (fractions, y up): the top third, i.e. 2560 x 360 on a 2560 x 1080 display.
     public static float ContextAreaTop = 1F;
     public static float ContextAreaHeight = 1F / 3F;
@@ -100,6 +111,8 @@ public class StudyLayout : MonoBehaviour
     {
         // Display 1 (build): borderless 1920 x 720 window at the top-left of the monitor (see TopAnchoredWindow).
         if (GetComponent<TopAnchoredWindow>() == null) gameObject.AddComponent<TopAnchoredWindow>();
+        // Instructions and guidance on their own display (Display 3 by default, see InstructionDisplayIndex).
+        if (GetComponent<InstructionDisplay>() == null) gameObject.AddComponent<InstructionDisplay>();
 
         // In a build, the extra monitor must be switched on once (Display 1 is always on).
         if (ContextViewsOnSeparateDisplay && !Application.isEditor)

@@ -28,8 +28,10 @@ using UnityEngine.InputSystem;
 //
 // A control step (phase 1) counts as learned when the CORRECT control has been held for HoldFor(step) seconds
 // in total - it does not have to be in one go. Wrong-mode or wrong-stick input is not counted.
-// The instructions are drawn in the right-hand part of Display 1 (StudyLayout.GuidePanel), over the driver view;
-// the practice trial runs in C1, so there are no context-aware views on Display 5.
+// The instructions are drawn on the INSTRUCTION DISPLAY (Display 3 by default, StudyLayout.InstructionDisplayIndex,
+// see InstructionDisplay.cs) as a centred column. Without that display they are drawn in the right-hand part of
+// Display 1 (StudyLayout.GuidePanel), over the driver view. The yellow outlines of the info pages always mark
+// the explained part of Display 1. The practice trial runs in C1, so there are no context-aware views on Display 5.
 //
 // Experimenter: gamepad Select/Back or keyboard N = skip the current step (logged).
 //
@@ -461,19 +463,42 @@ public class PracticeGuide : MonoBehaviour
         StudyLogger.Log("guide_complete", $"{reason};t={DoneAt:F1}");
     }
 
-    // ======================= drawing (right-hand panel) =======================
+    // ======================= drawing (instruction display, or right-hand panel of Display 1) =======================
 
     void OnGUI()
     {
         if (SM == null || SM.CurrentState != StudyManager.State.Running || SM.CurrentTrial.index != trialIndex) return;
         GUI.depth = -10;                           // on top of the task panel (for the yellow outlines)
-        float k = Screen.height / 1080F;
-        MakeStyles(k);
+        if (InstructionDisplay.Begin())
+        {
+            try { DrawPanel(true); }
+            finally { InstructionDisplay.End(); }
+        }
+        else DrawPanel(false);
+        DrawInfoOutline();                         // always on Display 1 (marks a part of the driver screen)
+    }
 
-        Rect slot = StudyLayout.GuidePanel;        // right-hand part of Display 1 (viewport coords, y up)
-        float top = 150F * k;                      // leave the mode icons (top right) visible
-        var r = new Rect(slot.x * Screen.width, (1F - slot.yMax) * Screen.height + top,
+    void DrawPanel(bool ownDisplay)
+    {
+        Rect r;
+        float k;
+        if (ownDisplay)
+        {
+            // Instruction display: a centred column over the full height.
+            float sw = InstructionDisplay.Width, sh = InstructionDisplay.Height;
+            k = sh / 1080F;
+            float m = 30F * k, pw = Mathf.Min(sw - 2F * m, 1000F * k);
+            r = new Rect((sw - pw) / 2F, m, pw, sh - 2F * m);
+        }
+        else
+        {
+            k = Screen.height / 1080F;
+            Rect slot = StudyLayout.GuidePanel;    // right-hand part of Display 1 (viewport coords, y up)
+            float top = 150F * k;                  // leave the mode icons (top right) visible
+            r = new Rect(slot.x * Screen.width, (1F - slot.yMax) * Screen.height + top,
                          slot.width * Screen.width, slot.height * Screen.height - top);
+        }
+        MakeStyles(k);
         float pad = 20F * k, x = r.x + pad, w = r.width - 2 * pad, y = r.y + pad;
 
         if (Done) { DrawFree(r, x, y, w, k); return; }
@@ -620,7 +645,7 @@ public class PracticeGuide : MonoBehaviour
         Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(holdA / HoldAToContinue), bar.height), new Color(0.2F, 0.85F, 0.3F));
     }
 
-    // Info page: text, "press A" at the bottom of the panel, and a pulsing yellow outline around the explained screen part.
+    // Info page: text and "press A" at the bottom of the panel (the yellow outline is drawn by DrawInfoOutline).
     void DrawInfo(Step s, float x, float y, float w, Rect panel, float k)
     {
         string how = HowText(s);
@@ -635,13 +660,17 @@ public class PracticeGuide : MonoBehaviour
         GUI.Label(a, StickControls.ConfirmBox, bigCenter);
         string cont = StickControls.Active ? $"Press the {StickControls.ConfirmName} to continue" : "Press A to continue";
         GUI.Label(new Rect(x + bw + 16F * k, by, w - bw - 16F * k, bs), ready ? cont : "Read this first...", title);
+    }
 
-        Rect target = AreaRect(s.area);
-        if (target.width > 0F)
-        {
-            float pulse = 0.55F + 0.45F * Mathf.Sin(Time.unscaledTime * 5F);
-            Outline(target, new Color(1F, 0.85F, 0.1F, pulse), 4F * k);
-        }
+    // Info page: pulsing yellow outline around the explained part of Display 1 (task panel, status bar, incidents).
+    void DrawInfoOutline()
+    {
+        if (Done || index < 0 || index >= steps.Count || steps[index].kind != Kind.Info) return;
+        Rect target = AreaRect(steps[index].area);
+        if (target.width <= 0F) return;
+        float k = Screen.height / 1080F;
+        float pulse = 0.55F + 0.45F * Mathf.Sin(Time.unscaledTime * 5F);
+        Outline(target, new Color(1F, 0.85F, 0.1F, pulse), 4F * k);
     }
 
     // Screen rectangles (GUI coordinates, y down) of the parts explained by the info pages.

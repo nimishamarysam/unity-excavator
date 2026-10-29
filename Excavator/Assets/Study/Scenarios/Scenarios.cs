@@ -33,7 +33,7 @@ public class PracticeScenario : Scenario
     {
         get
         {
-            if (guide != null && !guide.Done) return "Follow the instructions on the right.";
+            if (guide != null && !guide.Done) return InstructionDisplay.Active ? "Follow the instructions on the instruction screen." : "Follow the instructions on the right.";
             string text = $"Practise on your own. {StickControls.HoldConfirm} when you are ready to start the tasks.";
             if (siteBuilt) text += $"  Dumps: {Dumps}";
             if (SM != null)

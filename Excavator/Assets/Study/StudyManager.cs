@@ -244,13 +244,40 @@ public class StudyManager : MonoBehaviour
 
         if (CurrentState == State.Running) return;
 
+        // Participant screens (task instructions, practice/task complete, pause) go to the instruction display
+        // (Display 3 by default, see StudyLayout.InstructionDisplayIndex). Setup and Finished stay on Display 1.
+        bool participantScreen = CurrentState == State.Briefing || CurrentState == State.Paused || CurrentState == State.Questionnaire;
+        if (participantScreen && InstructionDisplay.Begin())
+        {
+            try { DrawScreen(InstructionDisplay.Width, InstructionDisplay.Height); }
+            finally { InstructionDisplay.End(); }
+            DrawDriverNote();
+        }
+        else DrawScreen(Screen.width, Screen.height);
+    }
+
+    // Small note on Display 1 while the instructions are shown on the instruction display.
+    void DrawDriverNote()
+    {
+        string text = CurrentState == State.Paused ? "Paused" : "Please read the instruction screen";
+        var r = new Rect((Screen.width - 620F) / 2F, (Screen.height - 90F) / 2F, 620F, 90F);
+        GUI.color = new Color(0F, 0F, 0F, 0.6F);
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        var style = new GUIStyle(big) { alignment = TextAnchor.MiddleCenter };
+        GUI.Label(r, text, style);
+    }
+
+    // One screen in a sw x sh pixel area (Display 1 or the instruction display).
+    void DrawScreen(float sw, float sh)
+    {
         // Dig and dump: the task instruction screen also shows a detailed site map on the right.
         MiniMap siteMap = null;
         if (CurrentState == State.Briefing && CurrentTrial.scenario == StudyScenario.Hard_DigAndDump)
             siteMap = briefingMap ??= DigDumpScenario.SiteMap();
-        float w = Mathf.Min(siteMap != null ? 1400 : 900, Screen.width - 80), h = Mathf.Min(siteMap != null ? 780 : 680, Screen.height - 80);
+        float w = Mathf.Min(siteMap != null ? 1400 : 900, sw - 80), h = Mathf.Min(siteMap != null ? 780 : 680, sh - 80);
         float mapW = siteMap != null ? Mathf.Min(480F, w * 0.4F) : 0F;
-        var r = new Rect((Screen.width - w) / 2, (Screen.height - h) / 2, w, h);
+        var r = new Rect((sw - w) / 2, (sh - h) / 2, w, h);
         GUI.color = new Color(1, 1, 1, 0.97F);
         GUI.Box(r, GUIContent.none, boxStyle);
         GUI.Box(r, GUIContent.none, boxStyle);

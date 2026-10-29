@@ -121,7 +121,7 @@ public static class StudyDesign
         switch (s)
         {
             case StudyScenario.Practice:
-                return "Nothing is measured. The panel on the right guides you through three phases:\n\n" +
+                return "Nothing is measured. " + (InstructionDisplay.Active ? "The instruction screen" : "The panel on the right") + " guides you through three phases:\n\n" +
                        "Phase 1 - Basic controls: one control at a time - switching between DRIVE and DIG mode, driving and turning, " +
                        "and the boom, arm, bucket and swing. Hold each control until its bar is full. Then a short explanation of the screen.\n\n" +
                        "Phase 2 - Digging and dumping: dig soil from the BROWN square and dump it on the WHITE square, step by step.\n\n" +
