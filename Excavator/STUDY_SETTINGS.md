@@ -56,8 +56,8 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Task panel size (text, incidents, mini-map) | `textH`, `incH`, `mapW` (const) | 118, 26, 130 | `Study/Scenarios/Scenario.cs` |
 | Context-aware views on their own display (Display 5, side by side) or on Display 1 stacked vertically in the right-hand panel | `StudyLayout.ContextViewsOnSeparateDisplay` (static switch); display number `ContextDisplayIndex` | `false` (Display 1, stacked) | `Study/StudyLayout.cs` |
 | Instructions and guidance (practice guide, task instruction screens, practice/task complete, pause) on their own display | `StudyLayout.InstructionsOnSeparateDisplay` (static switch) | `true` | `Study/StudyLayout.cs` |
-| **Which display shows the instructions** (0-based: Display 3 = 2) | `StudyLayout.InstructionDisplayIndex` (const) | `2` (Display 3) | `Study/StudyLayout.cs` |
-| Instruction display size in the Editor (a build uses the monitor's resolution) | `InstructionEditorWidth`, `InstructionEditorHeight` | 1920 × 1080 | `Study/StudyLayout.cs` |
+| **Which display shows the instructions** (0-based: Display 2 = 1) | `StudyLayout.InstructionDisplayIndex` (const) | `1` (Display 2) | `Study/StudyLayout.cs` |
+| **Instruction display resolution** (Editor and build) | `InstructionWidth`, `InstructionHeight` | 1280 × 720 | `Study/StudyLayout.cs` |
 | Instructions upside down on the instruction display | `InstructionDisplay.FlipY` (static switch) | `false` | `Study/InstructionDisplay.cs` |
 
 ## 4. Context-aware views (C2 and C3)

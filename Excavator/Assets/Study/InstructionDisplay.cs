@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // ---------------------------------------------------------------------------
-// INSTRUCTION DISPLAY (default Display 3)
+// INSTRUCTION DISPLAY (default Display 2, 1280 x 720)
 //
 // The participant instructions and guidance are shown on their own monitor:
 //   * the practice guide (PracticeGuide: phases 1-3, stick diagrams, hold bars, hints)
@@ -12,9 +12,9 @@ using UnityEngine.UI;
 // the setup screen needs keyboard / mouse input). The task panel and the measurement bar stay on Display 1.
 //
 // WHERE TO CHANGE IT (StudyLayout.cs):
-//   StudyLayout.InstructionDisplayIndex          which monitor (0-based: Display 3 = 2)
+//   StudyLayout.InstructionDisplayIndex          which monitor (0-based: Display 2 = 1)
+//   StudyLayout.InstructionWidth / Height        resolution (default 1280 x 720, Editor and build)
 //   StudyLayout.InstructionsOnSeparateDisplay    false = everything back on Display 1 (previous layout)
-//   StudyLayout.InstructionEditorWidth / Height  size used in the Editor (a build uses the monitor's resolution)
 //
 // HOW IT WORKS: Unity's IMGUI (OnGUI) can only draw on Display 1. So the instruction screens are drawn into
 // a RenderTexture (size of the instruction monitor) and that texture is shown full screen on the instruction
@@ -23,7 +23,7 @@ using UnityEngine.UI;
 // Begin() returns false when there is no instruction display (switch off, or the monitor is not connected
 // in a build) - then draw on Display 1 as before.
 //
-// In the Editor: open another Game view and set it to "Display 3" to see the instructions.
+// In the Editor: open another Game view, set it to "Display 2" and its size to 1280 x 720 to see the instructions.
 // In a build: the display is switched on automatically when Windows reports enough monitors.
 // If the instructions appear upside down on some graphics API, set FlipY = true.
 // Added automatically by StudyLayout.
@@ -57,13 +57,8 @@ public class InstructionDisplay : MonoBehaviour
         if (StudyLayout.ContextViewsOnSeparateDisplay && idx == StudyLayout.ContextDisplayIndex)
             Debug.LogWarning("[InstructionDisplay] Instruction display is the same as the context-view display - they will overlap.");
 
-        int w, h;
-        if (Application.isEditor)
-        {
-            w = StudyLayout.InstructionEditorWidth;
-            h = StudyLayout.InstructionEditorHeight;
-        }
-        else
+        int w = StudyLayout.InstructionWidth, h = StudyLayout.InstructionHeight;
+        if (!Application.isEditor)
         {
             if (Display.displays.Length <= idx)
             {
@@ -72,8 +67,7 @@ public class InstructionDisplay : MonoBehaviour
             }
             var d = Display.displays[idx];
             d.Activate();
-            w = d.systemWidth;
-            h = d.systemHeight;
+            d.SetRenderingResolution(w, h);   // render at InstructionWidth x InstructionHeight (scaled to the monitor if its native size differs)
         }
 
         rt = new RenderTexture(Mathf.Max(64, w), Mathf.Max(64, h), 0, RenderTextureFormat.ARGB32) { name = "InstructionDisplayRT" };

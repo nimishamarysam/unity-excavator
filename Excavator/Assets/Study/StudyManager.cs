@@ -245,7 +245,7 @@ public class StudyManager : MonoBehaviour
         if (CurrentState == State.Running) return;
 
         // Participant screens (task instructions, practice/task complete, pause) go to the instruction display
-        // (Display 3 by default, see StudyLayout.InstructionDisplayIndex). Setup and Finished stay on Display 1.
+        // (Display 2 by default, see StudyLayout.InstructionDisplayIndex). Setup and Finished stay on Display 1.
         bool participantScreen = CurrentState == State.Briefing || CurrentState == State.Paused || CurrentState == State.Questionnaire;
         if (participantScreen && InstructionDisplay.Begin())
         {

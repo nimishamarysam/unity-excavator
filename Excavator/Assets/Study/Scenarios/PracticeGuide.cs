@@ -28,7 +28,7 @@ using UnityEngine.InputSystem;
 //
 // A control step (phase 1) counts as learned when the CORRECT control has been held for HoldFor(step) seconds
 // in total - it does not have to be in one go. Wrong-mode or wrong-stick input is not counted.
-// The instructions are drawn on the INSTRUCTION DISPLAY (Display 3 by default, StudyLayout.InstructionDisplayIndex,
+// The instructions are drawn on the INSTRUCTION DISPLAY (Display 2 by default, StudyLayout.InstructionDisplayIndex,
 // see InstructionDisplay.cs) as a centred column. Without that display they are drawn in the right-hand part of
 // Display 1 (StudyLayout.GuidePanel), over the driver view. The yellow outlines of the info pages always mark
 // the explained part of Display 1. The practice trial runs in C1, so there are no context-aware views on Display 5.
