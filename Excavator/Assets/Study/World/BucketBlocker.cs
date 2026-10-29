@@ -44,7 +44,7 @@ public class BucketBlocker : MonoBehaviour
         if (m == null || c == null) return float.MaxValue;
         float best = float.MaxValue;
         foreach (var (p, r) in Probes())
-            best = Mathf.Min(best, Mathf.Max(0F, (c.ClosestPoint(p) - p).magnitude - r));
+            best = Mathf.Min(best, Mathf.Max(0F, (ColliderMath.ClosestPoint(c, p) - p).magnitude - r));
         return best;
     }
 
@@ -139,7 +139,7 @@ public class BucketBlocker : MonoBehaviour
         {
             if (c == null || !c.enabled) continue;
             if (!c.bounds.Intersects(new Bounds(p, Vector3.one * (2F * r)))) continue;
-            if ((c.ClosestPoint(p) - p).sqrMagnitude < r * r) return c;
+            if ((ColliderMath.ClosestPoint(c, p) - p).sqrMagnitude < r * r) return c;
         }
         return null;
     }

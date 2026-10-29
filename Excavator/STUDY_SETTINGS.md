@@ -39,6 +39,8 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Same incident not re-counted within | `repeatBlockSeconds` | 2 s | `Study/IncidentFeedback.cs` |
 | Warning sound volume | `volume` | 0.6 | `Study/IncidentFeedback.cs` |
 | Hazard check rate | `HazardTracker.rateHz` | 10 Hz | `Study/World/Hazard.cs` |
+| No hazard warnings/contacts counted right after trial start or after a hazard appears (e.g. a worker) | `HazardTracker.SettleSeconds` (const) | 0.5 s | `Study/World/Hazard.cs` |
+| Hazard distances use transform-based geometry (`ColliderMath`), not `Collider.ClosestPoint` | `ColliderMath.ClosestPoint` | – | `Study/World/Hazard.cs` |
 | What counts as a hazard response | `Responded()` (stick release or reversal) | – | `Study/World/Hazard.cs` |
 | Task-phase detection rate / hold time | `rateHz`, `holdSeconds` | 10 Hz, 0.5 s | `Study/Context/ContextMonitor.cs` |
 

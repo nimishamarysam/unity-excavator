@@ -54,7 +54,77 @@ public class ColliderHazard : Hazard
     public override Vector3 ClosestPointTo(Vector3 p)
     {
         if (col == null) return transform.position;
-        return col.ClosestPoint(p);
+        return ColliderMath.ClosestPoint(col, p);
+    }
+}
+
+// Closest point on a collider, computed from the collider's own Transform and shape settings instead of
+// Unity's physics engine (Collider.ClosestPoint). The engine reads its internal copy of the collider, which
+// lags behind when objects are moved by script (Auto Sync Transforms is off) or just switched on (a worker
+// appearing), and it returns the query point itself when it cannot measure - which looks like distance 0
+// and was logged as false hazard contacts ("dist=0.00") on some computers.
+// Box, capsule and sphere colliders (all hazards, truck parts, tracks) are solved exactly. Other colliders
+// (the machine's convex mesh colliders) use the engine, with the mesh's box as a fallback when the engine
+// clearly failed.
+public static class ColliderMath
+{
+    public static Vector3 ClosestPoint(Collider c, Vector3 p)
+    {
+        if (c == null) return p;
+        switch (c)
+        {
+            case BoxCollider b: return OnBox(b.transform, b.center, b.size, p);
+            case CapsuleCollider k: return OnCapsule(k, p);
+            case SphereCollider sp: return OnSphere(sp, p);
+        }
+        Vector3 q = c.ClosestPoint(p);
+        if ((q - p).sqrMagnitude < 1e-8F && c is MeshCollider mc && mc.sharedMesh != null)
+        {
+            // Engine says "touching": accept only if p really is inside the mesh's (oriented) box.
+            Bounds mb = mc.sharedMesh.bounds;
+            Vector3 onBox = OnBox(mc.transform, mb.center, mb.size, p);
+            if ((onBox - p).sqrMagnitude > 1e-6F) return onBox;
+        }
+        return q;
+    }
+
+    // Box in the collider's local space: clamp each local axis (exact also for rotated and scaled boxes).
+    static Vector3 OnBox(Transform t, Vector3 center, Vector3 size, Vector3 p)
+    {
+        Vector3 l = t.InverseTransformPoint(p) - center, h = size * 0.5F;
+        l = new Vector3(Mathf.Clamp(l.x, -h.x, h.x), Mathf.Clamp(l.y, -h.y, h.y), Mathf.Clamp(l.z, -h.z, h.z));
+        return t.TransformPoint(l + center);
+    }
+
+    static Vector3 OnCapsule(CapsuleCollider k, Vector3 p)
+    {
+        Transform t = k.transform;
+        Vector3 s = t.lossyScale; s = new Vector3(Mathf.Abs(s.x), Mathf.Abs(s.y), Mathf.Abs(s.z));
+        Vector3 axisLocal; float axisScale, radScale;
+        switch (k.direction)
+        {
+            case 0: axisLocal = Vector3.right; axisScale = s.x; radScale = Mathf.Max(s.y, s.z); break;
+            case 2: axisLocal = Vector3.forward; axisScale = s.z; radScale = Mathf.Max(s.x, s.y); break;
+            default: axisLocal = Vector3.up; axisScale = s.y; radScale = Mathf.Max(s.x, s.z); break;
+        }
+        float r = k.radius * radScale;
+        float half = Mathf.Max(k.height * axisScale * 0.5F, r) - r;      // half length of the inner segment
+        Vector3 c = t.TransformPoint(k.center);
+        Vector3 axis = t.TransformDirection(axisLocal).normalized;
+        float along = Mathf.Clamp(Vector3.Dot(p - c, axis), -half, half);
+        Vector3 seg = c + axis * along;
+        Vector3 d = p - seg;
+        return d.magnitude <= r ? p : seg + d.normalized * r;
+    }
+
+    static Vector3 OnSphere(SphereCollider sp, Vector3 p)
+    {
+        Transform t = sp.transform;
+        Vector3 s = t.lossyScale;
+        float r = sp.radius * Mathf.Max(Mathf.Abs(s.x), Mathf.Abs(s.y), Mathf.Abs(s.z));
+        Vector3 c = t.TransformPoint(sp.center);
+        Vector3 d = p - c;
+        return d.magnitude <= r ? p : c + d.normalized * r;
     }
 }
 
@@ -102,6 +172,12 @@ public class HazardTracker : MonoBehaviour
     class Episode { public float onset; public bool responded; public float minDist; public InputSnapshot inputAtOnset; }
     readonly Dictionary<Hazard, Episode> episodes = new Dictionary<Hazard, Episode>();
 
+    // No warnings/contacts are counted in the first SettleSeconds of a trial, or of a hazard becoming active
+    // (e.g. a worker appearing): positions are still being set up then. Distances are still measured.
+    public const float SettleSeconds = 0.5F;
+    readonly Dictionary<Hazard, float> activeSince = new Dictionary<Hazard, float>();
+    float lastTrialTime = -1F;
+
     public void Init(ExcavatorController ctl)
     {
         controller = ctl;
@@ -119,12 +195,25 @@ public class HazardTracker : MonoBehaviour
         if (Time.time < next) return;
         next = Time.time + 1F / rateHz;
 
+        // New trial (trial time went back): forget the previous trial's episodes and activation times.
+        if (sm.TrialTime < lastTrialTime) { episodes.Clear(); activeSince.Clear(); }
+        lastTrialTime = sm.TrialTime;
+
+        Physics.SyncTransforms();   // the machine's mesh colliders are still measured by the physics engine
+
         foreach (var h in Hazard.All.ToArray())
         {
-            if (!h.active) { if (h.CurrentLevel != Hazard.Level.Clear) Clear(h, sm); continue; }
+            if (!h.active || !h.gameObject.activeInHierarchy)
+            {
+                activeSince.Remove(h);
+                if (h.CurrentLevel != Hazard.Level.Clear) Clear(h, sm);
+                continue;
+            }
+            if (!activeSince.TryGetValue(h, out float since)) { since = sm.TrialTime; activeSince[h] = since; }
 
             float d = Distance(h);
             h.CurrentDistance = d;
+            if (sm.TrialTime < SettleSeconds || sm.TrialTime - since < SettleSeconds) continue;
             var level = d <= h.contactDistance ? Hazard.Level.Contact : d <= h.warnDistance ? Hazard.Level.Warning : Hazard.Level.Clear;
 
             if (h.CurrentLevel == Hazard.Level.Clear && level != Hazard.Level.Clear)
@@ -207,9 +296,9 @@ public class HazardTracker : MonoBehaviour
             if (c == null) continue;
             // two refinement steps: hazard point -> machine surface -> hazard point
             Vector3 p = h.ClosestPointTo(c.bounds.center);
-            Vector3 q = c.ClosestPoint(p);
+            Vector3 q = ColliderMath.ClosestPoint(c, p);
             p = h.ClosestPointTo(q);
-            q = c.ClosestPoint(p);
+            q = ColliderMath.ClosestPoint(c, p);
             float d = (p - q).magnitude;
             if (d < best) { best = d; h.MachinePoint = q; h.HazardPoint = p; }
         }
