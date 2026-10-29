@@ -55,6 +55,8 @@ public class StudyLayout : MonoBehaviour
     // >>> INSTRUCTION DISPLAY RESOLUTION (Editor and build). <<<
     public static int InstructionWidth = 1280;
     public static int InstructionHeight = 720;
+    // >>> INSTRUCTION TEXT SIZE: 1 = default, 1.2 = 20 % bigger, 0.9 = 10 % smaller (practice guide and instruction screens). <<<
+    public static float InstructionTextScale = 1F;
     // Part of Display 5 used for the views (fractions, y up): the top third, i.e. 2560 x 360 on a 2560 x 1080 display.
     public static float ContextAreaTop = 1F;
     public static float ContextAreaHeight = 1F / 3F;

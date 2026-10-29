@@ -249,16 +249,17 @@ public class StudyManager : MonoBehaviour
         bool participantScreen = CurrentState == State.Briefing || CurrentState == State.Paused || CurrentState == State.Questionnaire;
         if (participantScreen && InstructionDisplay.Begin())
         {
-            try { DrawScreen(InstructionDisplay.Width, InstructionDisplay.Height); }
+            try { DrawScreen(InstructionDisplay.Width, InstructionDisplay.Height, InstructionDisplay.UiScale); }
             finally { InstructionDisplay.End(); }
             DrawDriverNote();
         }
-        else DrawScreen(Screen.width, Screen.height);
+        else DrawScreen(Screen.width, Screen.height, 1F);
     }
 
     // Small note on Display 1 while the instructions are shown on the instruction display.
     void DrawDriverNote()
     {
+        SetFonts(1F);
         string text = CurrentState == State.Paused ? "Paused" : "Please read the instruction screen";
         var r = new Rect((Screen.width - 620F) / 2F, (Screen.height - 90F) / 2F, 620F, 90F);
         GUI.color = new Color(0F, 0F, 0F, 0.6F);
@@ -268,103 +269,153 @@ public class StudyManager : MonoBehaviour
         GUI.Label(r, text, style);
     }
 
-    // One screen in a sw x sh pixel area (Display 1 or the instruction display).
-    void DrawScreen(float sw, float sh)
+    // One screen in a sw x sh pixel area (Display 1 or the instruction display). k = size factor (1 = 1280 x 720 design).
+    void DrawScreen(float sw, float sh, float k)
     {
         // Dig and dump: the task instruction screen also shows a detailed site map on the right.
         MiniMap siteMap = null;
         if (CurrentState == State.Briefing && CurrentTrial.scenario == StudyScenario.Hard_DigAndDump)
             siteMap = briefingMap ??= DigDumpScenario.SiteMap();
-        float w = Mathf.Min(siteMap != null ? 1400 : 900, sw - 80), h = Mathf.Min(siteMap != null ? 780 : 680, sh - 80);
-        float mapW = siteMap != null ? Mathf.Min(480F, w * 0.4F) : 0F;
+        float m = 20F * k;
+        float w = Mathf.Min((siteMap != null ? 1400F : 1000F) * k, sw - 2F * m), h = sh - 2F * m;
+        float mapW = siteMap != null ? Mathf.Min(480F * k, w * 0.4F) : 0F;
         var r = new Rect((sw - w) / 2, (sh - h) / 2, w, h);
         GUI.color = new Color(1, 1, 1, 0.97F);
         GUI.Box(r, GUIContent.none, boxStyle);
         GUI.Box(r, GUIContent.none, boxStyle);
         GUI.color = Color.white;
-        GUILayout.BeginArea(new Rect(r.x + 30, r.y + 25, r.width - 60 - (siteMap != null ? mapW + 30F : 0F), r.height - 50));
+        var inner = new Rect(r.x + 30F * k, r.y + 25F * k, r.width - 60F * k - (siteMap != null ? mapW + 30F * k : 0F), r.height - 50F * k);
 
+        if (CurrentState == State.Setup) DrawSetup(inner);
+        else DrawItems(inner, ScreenItems(), k);
+
+        if (siteMap != null)
+        {
+            SetFonts(k);
+            var mr = new Rect(r.xMax - 30F * k - mapW, r.y + 55F * k, mapW, r.height - 80F * k);
+            GUI.Label(new Rect(mr.x, r.y + 22F * k, mapW, 30F * k), "Site map (seen from above)", normal);
+            siteMap.Draw(mr);
+        }
+    }
+
+    // Experimenter setup screen (Display 1, keyboard / mouse / gamepad).
+    void DrawSetup(Rect area)
+    {
+        SetFonts(1F);
+        GUILayout.BeginArea(area);
+        GUILayout.Label("Excavator study - setup", big);
+        GUILayout.Space(10);
+        GUILayout.Label("Participant number:", normal);
+        participantText = GUILayout.TextField(participantText, 4, GUILayout.Width(120), GUILayout.Height(34));
+        includePractice = GUILayout.Toggle(includePractice, "  Start with a practice trial", GUILayout.Height(30));
+        if (int.TryParse(participantText, out int id) && id >= 1)
+        {
+            var order = StudyDesign.ConditionOrder(id);
+            GUILayout.Label("Condition order: " + string.Join("  ->  ", Array.ConvertAll(order, StudyDesign.ConditionLabel)), normal);
+        }
+        else GUILayout.Label("Enter a number of 1 or more.", normal);
+        GUILayout.Space(10);
+        GUILayout.Label("Data folder: " + StudyLogger.Instance.FolderPath, normal);
+        GUILayout.Space(20);
+        GUILayout.Label(StickControls.Active
+            ? $"Joystick: hat left / right = participant number,  hat up = practice on/off,  {StickControls.ConfirmName} = start"
+            : "Gamepad: LB / RB = participant number,  Y = practice on/off,  A = start", normal);
+        if (GUILayout.Button("Start session  (Enter)", GUILayout.Height(44))) BeginSession();
+        GUILayout.EndArea();
+    }
+
+    // One line / paragraph of a participant screen. bottom = anchored to the bottom of the box.
+    struct ScreenItem
+    {
+        public string text; public bool big; public float space; public bool bottom;
+        public ScreenItem(string text, bool big = false, float space = 0F, bool bottom = false)
+        { this.text = text; this.big = big; this.space = space; this.bottom = bottom; }
+    }
+
+    List<ScreenItem> ScreenItems()
+    {
+        var list = new List<ScreenItem>();
         switch (CurrentState)
         {
-            case State.Setup:
-                GUILayout.Label("Excavator study - setup", big);
-                GUILayout.Space(10);
-                GUILayout.Label("Participant number:", normal);
-                participantText = GUILayout.TextField(participantText, 4, GUILayout.Width(120), GUILayout.Height(34));
-                includePractice = GUILayout.Toggle(includePractice, "  Start with a practice trial", GUILayout.Height(30));
-                if (int.TryParse(participantText, out int id) && id >= 1)
-                {
-                    var order = StudyDesign.ConditionOrder(id);
-                    GUILayout.Label("Condition order: " + string.Join("  ->  ", Array.ConvertAll(order, StudyDesign.ConditionLabel)), normal);
-                }
-                else GUILayout.Label("Enter a number of 1 or more.", normal);
-                GUILayout.Space(10);
-                GUILayout.Label("Data folder: " + StudyLogger.Instance.FolderPath, normal);
-                GUILayout.Space(20);
-                GUILayout.Label(StickControls.Active
-                    ? $"Joystick: hat left / right = participant number,  hat up = practice on/off,  {StickControls.ConfirmName} = start"
-                    : "Gamepad: LB / RB = participant number,  Y = practice on/off,  A = start", normal);
-                if (GUILayout.Button("Start session  (Enter)", GUILayout.Height(44))) BeginSession();
-                break;
-
             case State.Briefing:
                 var t = CurrentTrial;
                 int measured = t.scenario == StudyScenario.Practice ? 0 : CountMeasuredUpTo(trialPos);
-                GUILayout.Label(t.scenario == StudyScenario.Practice ? "Practice" : $"Task {measured} of 9", big);
-                GUILayout.Space(10);
+                list.Add(new ScreenItem(t.scenario == StudyScenario.Practice ? "Practice" : $"Task {measured} of 9", true));
                 if (t.scenario != StudyScenario.Practice)
                 {
-                    GUILayout.Label("Display: " + StudyDesign.ConditionLabel(t.condition), normal);
-                    GUILayout.Label(StudyDesign.ConditionBriefing(t.condition), normal);
-                    GUILayout.Space(10);
+                    list.Add(new ScreenItem("Display: " + StudyDesign.ConditionLabel(t.condition), space: 10));
+                    list.Add(new ScreenItem(StudyDesign.ConditionBriefing(t.condition)));
                 }
-                GUILayout.Label("Task: " + StudyDesign.ScenarioLabel(t.scenario), normal);
-                GUILayout.Label(StudyDesign.ScenarioBriefing(t.scenario), normal);
-                GUILayout.FlexibleSpace();
-                GUILayout.Label(StickControls.PressConfirm + " when you are ready to start.", big);
+                list.Add(new ScreenItem("Task: " + StudyDesign.ScenarioLabel(t.scenario), space: 10));
+                list.Add(new ScreenItem(StudyDesign.ScenarioBriefing(t.scenario)));
+                list.Add(new ScreenItem(StickControls.PressConfirm + " when you are ready to start.", true, 16, true));
                 break;
 
             case State.Paused:
-                GUILayout.Label("Paused", big);
-                GUILayout.Label($"Press {StickControls.PauseLabel} or P to continue.", normal);
+                list.Add(new ScreenItem("Paused", true));
+                list.Add(new ScreenItem($"Press {StickControls.PauseLabel} or P to continue."));
                 break;
 
             case State.Questionnaire:
                 if (CurrentTrial.scenario == StudyScenario.Practice)
                 {
                     // Practice: no questionnaires, just an encouraging message before the measured tasks.
-                    GUILayout.Label("Practice complete - well done!", big);
-                    GUILayout.Space(10);
-                    GUILayout.Label("Great job! You have learned how to drive the excavator and use the boom, arm, bucket and swing controls.", normal);
-                    GUILayout.Space(10);
-                    GUILayout.Label("Next, you will start the actual tasks. Before each task you will see a short description of what to do. " +
-                                    "Take your time to read it, and work carefully - try to avoid incidents.", normal);
-                    GUILayout.FlexibleSpace();
-                    GUILayout.Label(StickControls.PressConfirm + " when you are ready to continue.", normal);
+                    list.Add(new ScreenItem("Practice complete - well done!", true));
+                    list.Add(new ScreenItem("Great job! You have learned how to drive the excavator and use the boom, arm, bucket and swing controls.", space: 10));
+                    list.Add(new ScreenItem("Next, you will start the actual tasks. Before each task you will see a short description of what to do. " +
+                                            "Take your time to read it, and work carefully - try to avoid incidents.", space: 10));
+                    list.Add(new ScreenItem(StickControls.PressConfirm + " when you are ready to continue.", space: 16, bottom: true));
                 }
                 else
                 {
-                    GUILayout.Label("Task complete", big);
-                    GUILayout.Space(10);
-                    GUILayout.Label("Please fill in the SIM-TLX and SART questionnaires for this task.", normal);
-                    GUILayout.FlexibleSpace();
-                    GUILayout.Label("Experimenter: " + StickControls.PressConfirm.ToLower() + " (or Enter) to continue.", normal);
+                    list.Add(new ScreenItem("Task complete", true));
+                    list.Add(new ScreenItem("Please fill in the SIM-TLX and SART questionnaires for this task.", space: 10));
+                    list.Add(new ScreenItem("Experimenter: " + StickControls.PressConfirm.ToLower() + " (or Enter) to continue.", space: 16, bottom: true));
                 }
                 break;
 
             case State.Finished:
-                GUILayout.Label("Session complete - thank you!", big);
-                GUILayout.Space(10);
-                GUILayout.Label("Data saved in: " + StudyLogger.Instance.FolderPath, normal);
+                list.Add(new ScreenItem("Session complete - thank you!", true));
+                list.Add(new ScreenItem("Data saved in: " + StudyLogger.Instance.FolderPath, space: 10));
                 break;
         }
-        GUILayout.EndArea();
-        if (siteMap != null)
+        return list;
+    }
+
+    // Draws the items in 'area' with the largest text size (up to k) at which everything fits - never overflows.
+    void DrawItems(Rect area, List<ScreenItem> items, float k)
+    {
+        float f = k;
+        for (int i = 0; i < 20 && ItemsHeight(items, area.width, f) > area.height; i++) f *= 0.93F;
+        SetFonts(f);
+
+        float y = area.y, bottomH = 0F;
+        foreach (var it in items)
+            if (it.bottom) bottomH += it.space * f + Style(it).CalcHeight(new GUIContent(it.text), area.width);
+        float yb = Mathf.Max(area.yMax - bottomH, y);
+        foreach (var it in items)
         {
-            var mr = new Rect(r.xMax - 30F - mapW, r.y + 55F, mapW, r.height - 80F);
-            GUI.Label(new Rect(mr.x, r.y + 22F, mapW, 30F), "Site map (seen from above)", normal);
-            siteMap.Draw(mr);
+            var st = Style(it);
+            float hh = st.CalcHeight(new GUIContent(it.text), area.width);
+            if (it.bottom) { yb += it.space * f; GUI.Label(new Rect(area.x, yb, area.width, hh), it.text, st); yb += hh; }
+            else { y += it.space * f; GUI.Label(new Rect(area.x, y, area.width, hh), it.text, st); y += hh + 4F * f; }
         }
+    }
+
+    float ItemsHeight(List<ScreenItem> items, float width, float f)
+    {
+        SetFonts(f);
+        float total = 0F;
+        foreach (var it in items) total += it.space * f + Style(it).CalcHeight(new GUIContent(it.text), width) + 4F * f;
+        return total;
+    }
+
+    GUIStyle Style(ScreenItem it) => it.big ? big : normal;
+
+    void SetFonts(float f)
+    {
+        big.fontSize = Mathf.Max(8, Mathf.RoundToInt(30F * f));
+        normal.fontSize = Mathf.Max(8, Mathf.RoundToInt(20F * f));
     }
 
     int CountMeasuredUpTo(int pos)

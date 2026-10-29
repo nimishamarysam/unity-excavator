@@ -484,10 +484,11 @@ public class PracticeGuide : MonoBehaviour
         float k;
         if (ownDisplay)
         {
-            // Instruction display: a centred column over the full height.
+            // Instruction display: a centred column over the full height. k = 1 on a 720-pixel-high display
+            // (times StudyLayout.InstructionTextScale).
             float sw = InstructionDisplay.Width, sh = InstructionDisplay.Height;
-            k = sh / 1080F;
-            float m = 30F * k, pw = Mathf.Min(sw - 2F * m, 1000F * k);
+            k = InstructionDisplay.UiScale;
+            float m = 20F * k, pw = Mathf.Min(sw - 2F * m, 1100F * k);
             r = new Rect((sw - pw) / 2F, m, pw, sh - 2F * m);
         }
         else

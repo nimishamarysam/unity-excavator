@@ -42,10 +42,13 @@ public class InstructionDisplay : MonoBehaviour
     public static float Width => Active ? Instance.rt.width : Screen.width;
     public static float Height => Active ? Instance.rt.height : Screen.height;
 
+    // Text / layout size factor on the instruction display: 1 at 720 pixels high, times StudyLayout.InstructionTextScale.
+    public static float UiScale => Height / 720F * StudyLayout.InstructionTextScale;
+
     RenderTexture rt;
     RenderTexture prevRT;
     Matrix4x4 prevMatrix;
-    bool repainting;
+    bool repainting, warnedSmall;
     int depth;               // nested Begin() calls
     int lastDrawFrame = -10, clearedFrame = -1;
 
@@ -135,9 +138,16 @@ public class InstructionDisplay : MonoBehaviour
         var i = Instance;
         if (i.depth++ > 0) return true;
 
-        // GUI coordinates 0..Width / 0..Height are mapped onto the whole texture.
+        // GUI coordinates = texture pixels (0..Width, 0..Height), 1:1 - no scaling, so the layout does not depend on
+        // the size of Display 1 / the Editor Game view. (IMGUI clips to the Display 1 window, so that window must be at
+        // least as large as the instruction display: 1920 x 720 >= 1280 x 720 in the lab build.)
         i.prevMatrix = GUI.matrix;
-        GUI.matrix = Matrix4x4.Scale(new Vector3(Screen.width / (float)i.rt.width, Screen.height / (float)i.rt.height, 1F)) * i.prevMatrix;
+        GUI.matrix = Matrix4x4.identity;
+        if (!i.warnedSmall && (Screen.width < i.rt.width || Screen.height < i.rt.height))
+        {
+            i.warnedSmall = true;
+            Debug.LogWarning($"[InstructionDisplay] Display 1 / Game view ({Screen.width} x {Screen.height}) is smaller than the instruction display ({i.rt.width} x {i.rt.height}) - instructions will be cut off. Make the Display 1 Game view at least that large.");
+        }
 
         i.repainting = Event.current != null && Event.current.type == EventType.Repaint;
         if (i.repainting)
@@ -145,7 +155,7 @@ public class InstructionDisplay : MonoBehaviour
             i.prevRT = RenderTexture.active;
             RenderTexture.active = i.rt;
             GL.PushMatrix();
-            GL.LoadPixelMatrix(0F, Screen.width, Screen.height, 0F);
+            GL.LoadPixelMatrix(0F, i.rt.width, i.rt.height, 0F);
             if (i.lastDrawFrame != Time.frameCount) GL.Clear(true, true, ClearColor);   // first drawing this frame
             i.lastDrawFrame = Time.frameCount;
         }
