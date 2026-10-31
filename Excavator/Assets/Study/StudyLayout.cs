@@ -52,9 +52,53 @@ public class StudyLayout : MonoBehaviour
     public static bool InstructionsOnSeparateDisplay = true;
     // >>> INSTRUCTION DISPLAY NUMBER: 0-based, so Display 2 = 1 (Display 3 = 2, Display 4 = 3, ...). <<<
     public const int InstructionDisplayIndex = 1;     // Display 2
-    // >>> INSTRUCTION DISPLAY RESOLUTION (Editor and build). <<<
-    public static int InstructionWidth = 1280;
+    // >>> INSTRUCTION DISPLAY RESOLUTION (Editor and build). Set per setup in ApplySetup() below - do not change here. <<<
+    public static int InstructionWidth = 1920;
     public static int InstructionHeight = 720;
+
+    // >>> LAB / HOME SETUP SWITCH <<<
+    //   Editor: menu  Study > Setup > Lab  or  Home.  Remembered per computer (EditorPrefs), so the lab PC
+    //           stays on Lab and the home PC on Home - nothing to change in code or commit.
+    //   Build:  start the .exe with  -setup home  or  -setup lab  (default Lab).
+    //   The values used by each setup are in ApplySetup() - change them there.
+    public enum SetupProfile { Lab, Home }
+    public static SetupProfile Setup { get; private set; } = SetupProfile.Lab;
+    public const string SetupPrefKey = "StudyLayout.Setup";
+
+    public static void ApplySetup()
+    {
+        Setup = ReadSetup();
+        switch (Setup)
+        {
+            case SetupProfile.Home:
+                // Smaller instruction screen: the Display 1 Game view on a home monitor / laptop is usually
+                // narrower than 1920 px, and IMGUI clips the instructions to that Game view.
+                InstructionsOnSeparateDisplay = true;
+                InstructionWidth = 1280;
+                InstructionHeight = 720;
+                break;
+            default: // Lab
+                InstructionsOnSeparateDisplay = true;
+                InstructionWidth = 1920;
+                InstructionHeight = 720;
+                break;
+        }
+        Debug.Log($"[StudyLayout] Setup: {Setup} - instructions {(InstructionsOnSeparateDisplay ? $"on Display {InstructionDisplayIndex + 1}" : "on Display 1")} ({InstructionWidth} x {InstructionHeight})");
+    }
+
+    static SetupProfile ReadSetup()
+    {
+        var args = System.Environment.GetCommandLineArgs();
+        for (int i = 0; i < args.Length - 1; i++)
+            if (string.Equals(args[i], "-setup", System.StringComparison.OrdinalIgnoreCase)
+                && System.Enum.TryParse(args[i + 1], true, out SetupProfile fromArgs))
+                return fromArgs;
+#if UNITY_EDITOR
+        return (SetupProfile)UnityEditor.EditorPrefs.GetInt(SetupPrefKey, (int)SetupProfile.Lab);
+#else
+        return SetupProfile.Lab;
+#endif
+    }
     // >>> INSTRUCTION TEXT SIZE: 1 = default, 1.2 = 20 % bigger, 0.9 = 10 % smaller (practice guide and instruction screens). <<<
     public static float InstructionTextScale = 1F;
     // Part of Display 5 used for the views (fractions, y up): the top third, i.e. 2560 x 360 on a 2560 x 1080 display.
@@ -112,6 +156,7 @@ public class StudyLayout : MonoBehaviour
 
     void Awake()
     {
+        ApplySetup();   // Lab / Home values (must run before InstructionDisplay is added below)
         // Display 1 (build): borderless 1920 x 720 window at the top-left of the monitor (see TopAnchoredWindow).
         if (GetComponent<TopAnchoredWindow>() == null) gameObject.AddComponent<TopAnchoredWindow>();
         // Instructions and guidance on their own display (Display 2 by default, see InstructionDisplayIndex).
