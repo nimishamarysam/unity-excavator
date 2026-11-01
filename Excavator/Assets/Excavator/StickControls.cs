@@ -134,6 +134,32 @@ public static class StickControls
     public static bool HatRight() => HatPressed(h => h.right);
     public static bool HatUp() => HatPressed(h => h.up);
 
+    public static bool HatDown() => HatPressed(h => h.down);
+
+    // Hat directions currently HELD on any joystick (x: -1 left / +1 right, y: +1 up / -1 down). For the questionnaire.
+    public static Vector2Int HatHeld()
+    {
+        var v = Vector2Int.zero;
+        if (!Active) return v;
+        foreach (var j in Sticks)
+        {
+            var h = Hat(j);
+            if (h == null) continue;
+            if (h.left.isPressed) v.x = -1; else if (h.right.isPressed) v.x = 1;
+            if (h.up.isPressed) v.y = 1; else if (h.down.isPressed) v.y = -1;
+        }
+        return v;
+    }
+
+    // Largest left/right deflection of any joystick stick (-1..1). For the questionnaire.
+    public static float StickX()
+    {
+        float best = 0F;
+        if (!Active) return best;
+        foreach (var j in Sticks) { float x = j.stick.x.ReadValue(); if (Mathf.Abs(x) > Mathf.Abs(best)) best = x; }
+        return best;
+    }
+
     static bool HatPressed(System.Func<DpadControl, ButtonControl> dir)
     {
         if (!Active) return false;

@@ -39,7 +39,20 @@ using UnityEngine;
 
 public class StudyLayout : MonoBehaviour
 {
-    public const float BarHeight = 72F / 1080F;     // measurement bar (same as MeasurementBar.barHeight)
+    // Measurement (status) bar height as a fraction of Display 1's height. The bar is 72 px on a 1920 x 1080
+    // reference (MeasurementBar.barHeight) and its canvas scales by the mean of the width and height ratios
+    // (CanvasScaler, match 0.5), so it is computed the same way here. With a fixed 72/1080 the reserved strip
+    // was smaller than the drawn bar on a 1920 x 720 window (48 vs 59 px) and the bar covered the bottom of
+    // the driver view. Nothing else may be drawn over the bar: everything uses DriverView, which starts above it.
+    public const float BarHeightRef = 72F;
+    public static float BarHeight
+    {
+        get
+        {
+            float w = Mathf.Max(1F, Screen.width), h = Mathf.Max(1F, Screen.height);
+            return BarHeightRef * Mathf.Sqrt(w / 1920F * h / 1080F) / h;
+        }
+    }
     public const float PanelWidth = 0.28F;           // right-hand panel (one-display layout, practice instructions)
     public const float Gap = 0.006F;
 

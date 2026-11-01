@@ -7,12 +7,12 @@ using UnityEngine;
 // Fakes soil handling, because the original simulation has no soil physics.
 // Bucket joint angle (as shown in the measurement bar): 0 = fully curled in, 160 = fully open.
 //
-//   1. Fill:  while the teeth are in the soil inside the dig zone, soil enters the bucket
-//             in proportion to how the bucket moves through it, like a real bucket:
-//               - dragging the teeth horizontally (1.5 m fills the bucket), and/or
-//               - curling the bucket in (70 degrees fills the bucket).
-//             The terrain is cut ONLY while the bucket scoops like this and is not full. A straight plunge
-//             (down and up with no drag or curl), a full bucket or a wide-open bucket removes no soil.
+//   1. Fill:  while the teeth drag or curl through the soil inside the dig zone, the ground is cut
+//             (TerrainDigger.Dig) and the bucket fills by the VOLUME actually cut: bucketCapacity m3 = full.
+//             A deep cut fills the bucket after a short drag, a shallow one needs a longer drag. A full bucket
+//             cuts nothing more, so every scoop removes at most one bucket of soil, however it is done.
+//             Only CURLING IN or PULLING TOWARDS THE CAB scoops; pushing the bucket away from the cab, swinging,
+//             a straight plunge or a wide-open bucket removes no soil.
 //             The soil lump appears once there is a little soil and grows with the amount.
 //   2. Scoop: when the bucket leaves the soil at least 25% full, it is loaded
 //             ("bucket_filled", with the fill amount). Less than that falls back.
@@ -23,10 +23,14 @@ using UnityEngine;
 // Digging outside the zone removes nothing and is logged once per pass as cut_outside_zone.
 // ---------------------------------------------------------------------------
 
+[DefaultExecutionOrder(1002)]   // after the controller and the blockers, so it digs only at the FINAL (allowed) pose
 public class BucketLoad : MonoBehaviour
 {
-    public float dragMetersToFill = 1.5F;  // horizontal travel through soil that fills the bucket
-    public float curlDegreesToFill = 70F;  // curling through soil that fills the bucket
+    // >>> BUCKET SIZE: soil volume (m3) that fills the bucket. Bigger = fewer scoops per task. A real bucket of this
+    // machine class holds ~0.5-1 m3; 1.2 is a bit more so the trench fits the time limit. Used in all digging tasks. <<<
+    public float bucketCapacity = 1.2F;
+    public float dragMetersToFill = 1.5F;  // only to detect that the bucket is PULLED through the soil (not for the fill)
+    public float curlDegreesToFill = 70F;  // same
     public float minScoop = 0.25F;         // smallest load that counts as a scoop (0..1)
     public float minScoopMotion = 0.001F;  // fill gained per physics step below which the bucket is not scooping (no soil removed)
     public float dumpAngle = 140F;         // opened to this angle or more = soil falls out
@@ -89,15 +93,22 @@ public class BucketLoad : MonoBehaviour
             if (angle >= dumpAngle) Fill = 0F;   // bucket wide open: nothing stays in it (and nothing is dug)
             else
             {
-                float drag = new Vector2(tip.x - prevTip.x, tip.z - prevTip.z).magnitude;
+                // Soil enters only while the bucket CURLS IN or is PULLED TOWARDS THE CAB (like a real bucket).
+                // Pushing it away from the cab or sideways does not scoop.
+                Vector3 c = machine.SwingCenter;
+                float pull = new Vector2(prevTip.x - c.x, prevTip.z - c.z).magnitude - new Vector2(tip.x - c.x, tip.z - c.z).magnitude;
                 float curl = Mathf.Max(0F, prevAngle - angle);
-                float add = drag / dragMetersToFill + curl / curlDegreesToFill;
+                float add = Mathf.Max(0F, pull) / dragMetersToFill + curl / curlDegreesToFill;
                 // Soil is only REMOVED while the bucket SCOOPS (drags or curls through the soil) and still has room.
                 // A straight plunge (teeth down and up again, no drag, no curl) or a full bucket removes nothing,
                 // so trench progress always comes with soil in the bucket.
                 bool scooping = add > minScoopMotion && Fill < 1F;
-                if (scooping) digger.Dig(tip);
-                Fill = Mathf.Clamp01(Fill + add);
+                if (scooping)
+                {
+                    float cut = digger.Dig(tip, TerrainDigger.CutRadius, (1F - Fill) * bucketCapacity);
+                    Fill = Mathf.Clamp01(Fill + cut / bucketCapacity);
+                    if (Fill > 0.999F) Fill = 1F;
+                }
             }
         }
         else if (wasInSoil && !IsLoaded)

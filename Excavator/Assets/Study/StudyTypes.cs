@@ -121,12 +121,12 @@ public static class StudyDesign
         switch (s)
         {
             case StudyScenario.Practice:
-                return "Nothing is measured. " + (InstructionDisplay.Active ? "The instruction screen" : "The panel on the right") + " guides you through three phases:\n\n" +
-                       "Phase 1 - Basic controls: one control at a time - switching between DRIVE and DIG mode, driving and turning, " +
-                       "and the boom, arm, bucket and swing. Hold each control until its bar is full. Then a short explanation of the screen.\n\n" +
-                       "Phase 2 - Digging and dumping: dig soil from the BROWN square and dump it on the WHITE square, step by step.\n\n" +
-                       $"Phase 3 - Free practice: practise on your own. {StickControls.HoldConfirm} when you are ready to start the tasks " +
-                       "(the practice ends after 3 minutes at the latest).";
+                return "Nothing is measured during the practice session. " + (InstructionDisplay.Active ? "This session" : "The panel on the right") + " guides you through three phases:\n\n" +
+                       "Phase 1 - Basic controls: You will familiarize with one control at a time. Hold each control until its bar is full. You will also be guided through each element present on the screen.\n\n" +
+                       "Phase 2 - Digging and dumping: You will familiarize with digging and dumping process. Dig the oil from the BROWN square and dump it on the WHITE square as instructed.\n\n" +
+                       $"Phase 3 - Free practice: You get to practice the controls and movements on your own. ";
+                       //$"{StickControls.HoldConfirm} when you are ready to start the tasks " +
+                       //"(the practice ends after 3 minutes at the latest).";
             case StudyScenario.Easy_Driving:
                 return "Goal: drive through the 4 gates in order, then reverse to the yellow stop line.\n\n" +
                        $"1. Drive forward: {StickControls.DriveForward} and pass through gates 1, 2, 3 and 4 in order.\n" +

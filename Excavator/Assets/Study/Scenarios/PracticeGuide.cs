@@ -23,8 +23,27 @@ using UnityEngine.InputSystem;
 //   If the soil falls out on the way, the guide goes back to the right step and says why.
 //
 // PHASE 3 - FREE PRACTICE (no guide)
+//   Starts with an instruction page (phase3_intro); the free-practice TIMER starts only when the participant
+//   has read it and pressed A (not when the last dump of phase 2 happens).
 //   The participant practises on their own and HOLDS A for HoldAToContinue seconds when ready
 //   (ends the practice: "participant_ready"), or the practice ends after StudyManager.practiceDurationSeconds.
+//
+// REDO A PHASE - only AFTER phases 1 to 3 have all been completed once (the first run is always 1 -> 2 -> 3).
+//   Participant: the "Practice complete" menu below.
+//   Experimenter: keyboard 1 / 2 / 3 restarts phase 1 / 2 / 3 from its first step - also only after the first
+//     complete run (before that, N still skips a step). Phase 3 restarts at its instruction page; the timer stops.
+//   After ALL THREE phases (phase 3 ended by holding A, or its time is up) a "Practice complete" menu
+//     appears: Start the tasks / Repeat phase 1 / Repeat phase 2 / Repeat phase 3. Choose with the joystick
+//     hat or gamepad D-pad up / down (keyboard arrows), confirm with A (or Enter). Only "Start the tasks"
+//     ends the practice trial. Logged: practice_menu (why it opened), practice_ready (tasks started).
+//     A phase repeated AFTER the menu was reached once (from the menu, or with the experimenter keys) is played
+//     on its own and then goes straight BACK TO THE MENU (phase 1 -> menu, phase 2 -> menu, phase 3 -> its free
+//     practice -> menu); the following phases are not replayed.
+//   Logged as guide_phase_redo (phase, who, from which step).
+//
+// DRIVER-VIEW PROGRESS (ShowProgressInDriverView): while the instructions are on the instruction display, the
+//   phase-1 drive / dig steps ALSO show the hold (progress) bar at the bottom centre of the driver view on
+//   Display 1, just above the status bar, with the green line "Correct - keep holding" while the input is right.
 //
 // A control step (phase 1) counts as learned when the CORRECT control has been held for HoldFor(step) seconds
 // in total - it does not have to be in one go. Wrong-mode or wrong-stick input is not counted.
@@ -43,12 +62,13 @@ using UnityEngine.InputSystem;
 //   with TWO sticks they stay as for the gamepad (same layout). The steps check the machine inputs
 //   (tracks, boom, arm, bucket, swing), so the completion rules are the same for every device.
 // Logged events: guide_step_start, guide_step_done (took / held / wrong-input seconds), guide_step_skipped,
-//                guide_step_back (phase 2: soil lost), guide_complete, practice_ready.
+//                guide_step_back (phase 2: soil lost), guide_phase_redo, guide_complete, practice_ready.
 // ---------------------------------------------------------------------------
 
 public class PracticeGuide : MonoBehaviour
 {
     public static bool Enabled = true;            // false = old practice (free practice only)
+    public static bool ShowProgressInDriverView = true;   // phase 1: hold bar in the driver view too
     public static float HoldSeconds = 2F;         // DEFAULT correct input needed per control step
 
     // HOLD TIME PER STEP (seconds). Steps listed here use this time instead of HoldSeconds.
@@ -62,8 +82,8 @@ public class PracticeGuide : MonoBehaviour
         { "boom_up",     2F },
         { "arm_out",     2F },
         { "arm_in",      3F },
-        { "bucket_curl", 1.5F },
-        { "bucket_open", 1.5F },
+        { "bucket_curl", 2F },
+        { "bucket_open", 2F },
     };
 
     public static float HoldFor(string stepId) => HoldPerStep.TryGetValue(stepId, out float t) ? t : HoldSeconds;
@@ -103,6 +123,8 @@ public class PracticeGuide : MonoBehaviour
         public Func<string> hint;                 // task steps: contextual hint (may be null / return "")
         public Func<bool> lost;                   // task steps: soil lost -> go back to 'backTo'
         public string backTo, lostText;
+        public int redoPhase;                     // phase start page: the phase before it (its "Phase N is complete" lead-in
+                                                  // is hidden when a phase is repeated from the menu)
         public Action onStart;
         public float held, wrong, startedAt;
     }
@@ -119,6 +141,20 @@ public class PracticeGuide : MonoBehaviour
     int dumpsAtStepStart;
     int dumpsAtCycleStart;                        // phase 2: dumps when the guided dig cycle (dig_over) started
     float holdA;
+    bool waitARelease;                            // phase 3: A from the instruction page must be let go first
+    bool menu;                                    // "Practice complete" menu after all three phases
+    int menuSel;                                  // 0 = start the tasks, 1..3 = repeat that phase
+    float menuOpenedAt;
+    string menuReason = "";
+    const float MenuMinSeconds = 1F;              // menu: A works only after this long (no accidental choice)
+    public bool MenuOpen => Done && menu;
+    // On the free-practice instruction page (phase 3, timer not started yet).
+    public bool OnFreePracticeIntro => !Done && index >= 0 && index < steps.Count && steps[index].id == "phase3_intro";
+    bool allPhasesDone;                           // the menu has been reached at least once
+    int repeatOnly;                               // phase being repeated after that (0 = none) -> back to the menu after it
+    float guideStartedAt;                         // for the GuideMaxSeconds cap (restarts with each repeat)
+    static readonly string[] MenuItems =
+        { "Start the tasks", "Repeat phase 1 - basic controls", "Repeat phase 2 - digging and dumping", "Repeat phase 3 - free practice" };
 
     GUIStyle small, title, body, hint, center, bigCenter;
 
@@ -140,8 +176,8 @@ public class PracticeGuide : MonoBehaviour
     {
         // ---------------- PHASE 1: basic controls ----------------
         steps.Add(new Step { id = "mode_drive", kind = Kind.ModeDrive, title = "Switch to DRIVE mode",
-            how = "Press the B button on the gamepad.\nThe DRIVE icon (tracks, top right) turns green. In DRIVE mode the two sticks move the two tracks.",
-            how1 = "Tap the trigger (press it and let go quickly).\nThe DRIVE icon (tracks, top right) turns green. In DRIVE mode the stick drives the machine: " +
+            how = "Press the B button on the gamepad.\nMODE in the status bar (bottom) changes to DRIVE. In DRIVE mode the two sticks move the two tracks.",
+            how1 = "Tap the trigger (press it and let go quickly).\nMODE in the status bar (bottom) changes to DRIVE. In DRIVE mode the stick drives the machine: " +
                    "forward / back = drive, left / right = steer.",
             keys = "Gamepad B" });
 
@@ -171,8 +207,8 @@ public class PracticeGuide : MonoBehaviour
             s => s.trackRight <= -StickOn && s.trackLeft <= 0.15F && s.trackLeft >= s.trackRight + TrackDiff);
 
         steps.Add(new Step { id = "mode_dig", kind = Kind.ModeDig, title = "Switch to DIG mode",
-            how = "Press the B button again.\nThe DIG icon (bucket, top right) turns green. In DIG mode the sticks move the boom, arm, bucket and cab.",
-            how1 = "Tap the trigger again.\nThe DIG icon (bucket, top right) turns green. In DIG mode the stick moves the boom (forward / back) " +
+            how = "Press the B button again.\nMODE in the status bar (bottom) changes to DIG. In DIG mode the sticks move the boom, arm, bucket and cab.",
+            how1 = "Tap the trigger again.\nMODE in the status bar (bottom) changes to DIG. In DIG mode the stick moves the boom (forward / back) " +
                    "and the cab (left / right), trigger + stick moves the arm, and twisting the grip moves the bucket.",
             keys = "Gamepad B" });
 
@@ -190,12 +226,11 @@ public class PracticeGuide : MonoBehaviour
         AddInfo("info_task_panel", "The task panel (top left)", Area.TaskPanel,
             "The panel at the top left (outlined in yellow) describes your current task.\n\n" +
             "- First line: the goal of the task.\n" +
-            "- Lines below: what to do next and your progress, for example the next gate to drive through or how many loads are done.\n" +
-            "- Some tasks also show a small map on the right of the panel with your position and where to go.\n\n" +
+            "- Lines below: what to do next and your progress. \n" +
             "Before each task you also get a short description. During the task, look at this panel whenever you are unsure what to do next.");
         AddInfo("info_status_bar", "The status bar (bottom)", Area.StatusBar,
             "The dark bar along the bottom of the screen (outlined in yellow) shows the state of the machine as numbers:\n\n" +
-            "- MODE: TRAVEL (driving) or DIG\n" +
+            "- MODE: DRIVE or DIG\n" +
             "- SWING: how far the cab is turned (degrees)\n" +
             "- BOOM, ARM, BUCKET: the angle of each part (degrees)\n" +
             "- BUCKET HEIGHT: height of the bucket teeth above the ground in metres (minus = below the ground, i.e. how deep you dig)\n" +
@@ -215,17 +250,18 @@ public class PracticeGuide : MonoBehaviour
             "- Digging deeper than the target depth\n" +
             "- Digging outside the marked dig area\n" +
             "- Moving the bucket over a worker\n" +
-            "- Spilling soil, or dumping it outside the dumping area\n\n" +
-            "Try to finish each task with as few incidents as possible.");
+            "- Spilling soil, or dumping it outside the dumping area\n\n");
 
         // ---------------- PHASE 2: digging and dumping ----------------
         // Matches BucketLoad: soil enters only while the teeth drag/curl through soil in the dig zone; >= 25 % when
         // leaving the soil = loaded; dump = bucket opened to ~140 deg while >= 0.5 m above the ground.
         var intro = AddInfo("phase2_intro", "Digging and dumping", Area.None,
+            "Phase 1 (basic controls) is complete.\n\n" +
             "Now you will dig one bucket of soil and dump it, step by step.\n\n" +
             "You can dig anywhere in front of the machine and dump anywhere.");
         intro.phase = 2;
-        intro.onStart = () => site.BuildDigSite();
+        intro.redoPhase = 1;
+        intro.onStart = () => { site.BuildDigSite(); ctl.Machine.EnableCuttingEdges(true); };
 
         AddTask("dig_in", "Teeth into the ground",
             "Reach out with the arm, open the bucket a little, then lower the boom until the teeth are in the ground.",
@@ -247,7 +283,7 @@ public class PracticeGuide : MonoBehaviour
             () => !site.Load.IsLoaded && site.Load.Fill < 0.05F && !TeethInSoil, "dig_in",
             "The bucket was not full enough and the soil fell back. Scoop again.");
         AddTask("dump_open", "Dump the soil",
-            "Keep the bucket curled, swing the cab to any spot you like, then open the bucket fully (RIGHT stick right).",
+            "Keep the bucket curled, swing the cab to any spot you like, then open the bucket fully .",
             () => site.Dumps > dumpsAtCycleStart,
             () => $"Bucket angle: {ctl.Machine.bucketAngle:0}°  (opens fully at about 140°)",
             () => ctl.Machine.BucketHeightAboveGround < 0.5F ? "Lift the bucket a bit higher first." : "",
@@ -258,6 +294,16 @@ public class PracticeGuide : MonoBehaviour
             () => site.Dumps > dumpsAtStepStart,
             () => $"Bucket load: {Mathf.RoundToInt(site.Load.Fill * 100F)} %",
             null, null, null, null);
+
+        // ---------------- PHASE 3: free practice - instruction page first ----------------
+        // The free-practice time starts only when this page is continued with A (Finish -> DoneAt).
+        int minutes = Mathf.Max(1, Mathf.RoundToInt(SM.practiceDurationSeconds / 60F));
+        var free = AddInfo("phase3_intro", "Free practice", Area.None,
+            "Phase 2 (digging and dumping) is complete.\n\n" +
+            $"Now you can practise on your own for up to {minutes} minutes: drive around, or dig and dump anywhere you like.\n\n" +
+            "When you are done practicing and feel ready for the tasks, {HOLD} (you do not have to use all the time).");   // {HOLD} is filled in when drawn
+        free.phase = 3;
+        free.redoPhase = 2;
 
         AddSingleStickTexts();
     }
@@ -348,16 +394,25 @@ public class PracticeGuide : MonoBehaviour
         // Joystick or gamepad buttons; keyboard only for the experimenter keys (StickControls.cs).
         var kb = StickControls.ExperimenterKeyboard;
 
+        // Experimenter: 1 / 2 / 3 restarts that phase at any time during the practice (also in phase 3).
+        if ((Active || FreeActive) && kb != null && allPhasesDone)
+        {
+            int p = kb.digit1Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame ? 1
+                  : kb.digit2Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame ? 2
+                  : kb.digit3Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame ? 3 : 0;
+            if (p > 0) { JumpToPhase(p, "experimenter"); return; }
+        }
+
         // Phase 3: hold A (gamepad) / the confirm button (joystick) to finish the practice.
         if (FreeActive)
         {
+            if (menu) { MenuInput(kb); return; }
             bool aHeld = StickControls.ConfirmHeld();
+            // Free-practice time over -> the menu (the practice does not end by itself any more).
+            if (SM.TrialTime >= DoneAt + SM.practiceDurationSeconds) { OpenMenu("time_up"); return; }
+            if (waitARelease) { if (!aHeld) waitARelease = false; holdA = 0F; return; }
             holdA = aHeld ? holdA + Time.unscaledDeltaTime : 0F;
-            if (holdA >= HoldAToContinue)
-            {
-                StudyLogger.Log("practice_ready", $"free_practice_s={SM.TrialTime - DoneAt:F1}");
-                SM.EndTrial("participant_ready");
-            }
+            if (holdA >= HoldAToContinue) OpenMenu("participant_ready");
             return;
         }
         if (!Active) return;
@@ -373,13 +428,14 @@ public class PracticeGuide : MonoBehaviour
         // Info page: A (or Enter for the experimenter) continues, once the page has been up for InfoMinSeconds.
         var st = steps[index];
         bool next = StickControls.ConfirmPressed() || (kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame));
-        if (st.kind == Kind.Info && next && SM.TrialTime - st.startedAt >= InfoMinSeconds) CompleteStep();
+        bool readyInfo = st.kind == Kind.Info && SM.TrialTime - st.startedAt >= InfoMinSeconds;
+        if (readyInfo && next) CompleteStep();
     }
 
     void FixedUpdate()
     {
         if (!Active) return;
-        if (SM.TrialTime >= GuideMaxSeconds) { Finish("time_cap"); return; }
+        if (SM.TrialTime - guideStartedAt >= GuideMaxSeconds) { Finish("time_cap"); return; }
 
         var s = steps[index];
         var input = ctl.LastInput;
@@ -425,6 +481,12 @@ public class PracticeGuide : MonoBehaviour
     void NextStep()
     {
         index++;
+        // Repeating phase 1 or 2 after the menu: when that phase is finished, go straight back to the menu.
+        if ((repeatOnly == 1 || repeatOnly == 2) && (index >= steps.Count || steps[index].phase != repeatOnly))
+        {
+            ReturnToMenu();
+            return;
+        }
         if (index >= steps.Count) { Finish("completed"); return; }
         StartStep();   // the next step starts straight away
     }
@@ -437,6 +499,71 @@ public class PracticeGuide : MonoBehaviour
         StudyLogger.Log("guide_step_back", $"{s.id}->{s.backTo}");
         backMessage = s.lostText;
         backMessageUntil = SM.TrialTime + 5F;
+        index = to;
+        StartStep();
+    }
+
+    // ---- "Practice complete" menu (after all three phases) ----
+    // End of a repeated phase 1 / 2: back to the menu (with the dig site and a diggable bucket, as after phase 3).
+    void ReturnToMenu()
+    {
+        int p = repeatOnly;
+        index = Mathf.Min(index, steps.Count - 1);
+        Done = true;
+        DoneAt = SM.TrialTime;
+        if (site != null) site.BuildDigSite();
+        if (ctl != null) ctl.Machine.EnableCuttingEdges(true);
+        StudyLogger.Log("guide_repeat_done", $"phase={p};t={DoneAt:F1}");
+        OpenMenu($"repeat_phase{p}_done");
+    }
+
+    void OpenMenu(string reason)
+    {
+        allPhasesDone = true;
+        repeatOnly = 0;
+        menu = true;
+        menuSel = 0;
+        menuOpenedAt = Time.unscaledTime;
+        menuReason = reason;
+        holdA = 0F;
+        StudyLogger.Log("practice_menu", $"{reason};free_practice_s={SM.TrialTime - DoneAt:F1}");
+    }
+
+    void MenuInput(UnityEngine.InputSystem.Keyboard kb)
+    {
+        var pad = StickControls.Pad;
+        bool up = StickControls.HatUp() || (pad != null && pad.dpad.up.wasPressedThisFrame) || (kb != null && kb.upArrowKey.wasPressedThisFrame);
+        bool down = StickControls.HatDown() || (pad != null && pad.dpad.down.wasPressedThisFrame) || (kb != null && kb.downArrowKey.wasPressedThisFrame);
+        if (up) menuSel = (menuSel + MenuItems.Length - 1) % MenuItems.Length;
+        if (down) menuSel = (menuSel + 1) % MenuItems.Length;
+        if (Time.unscaledTime - menuOpenedAt < MenuMinSeconds) return;
+        bool ok = StickControls.ConfirmPressed() || (kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame));
+        if (!ok) return;
+        if (menuSel == 0)
+        {
+            StudyLogger.Log("practice_ready", $"free_practice_s={SM.TrialTime - DoneAt:F1};menu={menuReason}");
+            SM.EndTrial("participant_ready");
+        }
+        else JumpToPhase(menuSel, "participant_menu");
+    }
+
+
+    // (Re)start phase p from its first step (phase 3: its instruction page, so the free-practice timer stops
+    // and starts again when that page is continued). Works from any step and from the free practice.
+    void JumpToPhase(int p, string by)
+    {
+        int to = p == 3 ? steps.FindIndex(q => q.id == "phase3_intro") : steps.FindIndex(q => q.phase == p);
+        if (to < 0) return;
+        string from = Done ? "free_practice" : steps[index].id;
+        StudyLogger.Log("guide_phase_redo", $"phase={p};by={by};from={from}");
+        Done = false;
+        menu = false;
+        repeatOnly = allPhasesDone ? p : 0;   // after the menu: play only this phase, then back to the menu
+        guideStartedAt = SM.TrialTime;
+        holdA = 0F;
+        backMessageUntil = -1F;
+        foreach (var q in steps) { q.held = 0F; q.wrong = 0F; }
+        if (p == 1) ctl.Machine.EnableCuttingEdges(false);   // phase 1: solid bucket again, as the first time
         index = to;
         StartStep();
     }
@@ -458,8 +585,11 @@ public class PracticeGuide : MonoBehaviour
         if (Done) return;
         Done = true;
         DoneAt = SM.TrialTime;
+        holdA = 0F;
+        waitARelease = true;   // the A press that started phase 3 must not count towards "hold A when ready"
         index = Mathf.Min(index, steps.Count - 1);
         if (site != null) site.BuildDigSite();   // free practice always has the dig and dump areas
+        if (ctl != null) ctl.Machine.EnableCuttingEdges(true);   // also after a phase-1 redo + jump to phase 3
         StudyLogger.Log("guide_complete", $"{reason};t={DoneAt:F1}");
     }
 
@@ -476,6 +606,44 @@ public class PracticeGuide : MonoBehaviour
         }
         else DrawPanel(false);
         DrawInfoOutline();                         // always on Display 1 (marks a part of the driver screen)
+        if (InstructionDisplay.Active && ShowProgressInDriverView) DrawDriverProgress();
+    }
+
+    GUIStyle dvOk;
+
+    // Phase 1 drive / dig steps: the hold bar at the bottom centre of the driver view (Display 1), just above the
+    // status bar - the same bar as on the instruction screen - and, while the correct control is held, the green
+    // line "Correct - keep holding" above it. Nothing else.
+    void DrawDriverProgress()
+    {
+        if (Done || index < 0 || index >= steps.Count) return;
+        var s = steps[index];
+        if (s.kind != Kind.Drive && s.kind != Kind.Dig) return;
+
+        float k = Mathf.Clamp(Screen.height / 720F, 0.6F, 2F);
+        Rect v = StudyLayout.DriverView;                       // viewport, y up
+        float vx = v.x * Screen.width, vw = v.width * Screen.width;
+        float vBottom = (1F - v.y) * Screen.height;            // top of the status bar (GUI y down)
+        float w = Mathf.Min(480F * k, vw - 40F * k), h = 18F * k, border = 3F * k;
+        var bar = new Rect(vx + (vw - w) / 2F, vBottom - h - 14F * k, w, h);
+        Fill(new Rect(bar.x - border, bar.y - border, bar.width + 2F * border, bar.height + 2F * border), new Color(0.07F, 0.08F, 0.09F, 0.85F));
+        Fill(bar, new Color(0.25F, 0.25F, 0.27F));
+        Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(s.held / HoldFor(s.id)), bar.height),
+             lastOk ? new Color(0.2F, 0.85F, 0.3F) : new Color(0.15F, 0.55F, 0.2F));
+
+        if (lastOk)
+        {
+            if (dvOk == null)
+            {
+                dvOk = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
+                dvOk.normal.textColor = new Color(0.4F, 1F, 0.5F);
+            }
+            dvOk.fontSize = Mathf.RoundToInt(18 * k);
+            float th = 28F * k;
+            var tr = new Rect(bar.x, bar.y - border - th - 4F * k, bar.width, th);
+            Fill(tr, new Color(0.07F, 0.08F, 0.09F, 0.85F));
+            GUI.Label(tr, "Correct - keep holding", dvOk);
+        }
     }
 
     void DrawPanel(bool ownDisplay)
@@ -502,7 +670,7 @@ public class PracticeGuide : MonoBehaviour
         MakeStyles(k);
         float pad = 20F * k, x = r.x + pad, w = r.width - 2 * pad, y = r.y + pad;
 
-        if (Done) { DrawFree(r, x, y, w, k); return; }
+        if (Done) { if (menu) DrawMenu(r, x, y, w, k); else DrawFree(r, x, y, w, k); return; }
 
         Box(r, new Color(0.07F, 0.08F, 0.09F, 0.95F));
         var s = steps[index];
@@ -615,23 +783,21 @@ public class PracticeGuide : MonoBehaviour
         GUI.Label(new Rect(x, y, w, 80 * k), h, hint);
     }
 
-    // Phase 3: small card - free practice, hold A when ready, time left.
+    // Phase 3: small card - free practice, hold A when ready (time left only in the driver view's task panel).
     void DrawFree(Rect r, float x, float y, float w, float k)
     {
         var card = new Rect(r.x, r.y, r.width, 330F * k);
         Box(card, new Color(0.07F, 0.08F, 0.09F, 0.95F));
         GUI.Label(new Rect(x, y, w, 24 * k), "PHASE 3 OF 3 - FREE PRACTICE", small);
         y += 30 * k;
-        GUI.Label(new Rect(x, y, w, 40 * k), "Practise on your own", title);
+        GUI.Label(new Rect(x, y, w, 40 * k), "Practice on your own", title);
         y += 46 * k;
-        string how = "Drive around, or dig and dump anywhere you like - whatever you want to practise.";
+        string how = "Drive around, or dig and dump anywhere you like - whatever you want to practice.";
         float hh = body.CalcHeight(new GUIContent(how), w);
         GUI.Label(new Rect(x, y, w, hh), how, body);
         y += hh + 16 * k;
 
-        float left = Mathf.Max(0F, DoneAt + SM.practiceDurationSeconds - SM.TrialTime);
-        GUI.Label(new Rect(x, y, w, 26 * k), $"Time left: {Mathf.FloorToInt(left / 60F)}:{Mathf.FloorToInt(left % 60F):00}", body);
-        y += 36 * k;
+        // No timer here: the time left is shown in the task panel of the driver view (PracticeScenario.ProgressText).
 
         float bs = 46F * k;
         float bw = ButtonBoxWidth(bs, k);
@@ -639,17 +805,56 @@ public class PracticeGuide : MonoBehaviour
         Fill(a, new Color(0.2F, 0.7F, 0.25F));
         GUI.Label(a, StickControls.ConfirmBox, bigCenter);
         hint.normal.textColor = Color.white;
-        GUI.Label(new Rect(x + bw + 14 * k, y, w - bw - 14 * k, bs), $"Ready? {StickControls.HoldConfirm} to start the tasks", hint);
+        GUI.Label(new Rect(x + bw + 14 * k, y, w - bw - 14 * k, bs), $"Done practicing? {StickControls.HoldConfirm} to start the tasks", hint);
         y += bs + 8 * k;
         var bar = new Rect(x, y, w, 14 * k);
         Fill(bar, new Color(0.25F, 0.25F, 0.27F));
         Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(holdA / HoldAToContinue), bar.height), new Color(0.2F, 0.85F, 0.3F));
     }
 
+    // "Practice complete" menu: start the tasks or repeat any phase.
+    void DrawMenu(Rect r, float x, float y, float w, float k)
+    {
+        Box(r, new Color(0.07F, 0.08F, 0.09F, 0.95F));
+        GUI.Label(new Rect(x, y, w, 24 * k), "PRACTICE COMPLETE - ALL 3 PHASES DONE", small);
+        y += 30 * k;
+        GUI.Label(new Rect(x, y, w, 40 * k), "What would you like to do next?", title);
+        y += 48 * k;
+        string intro = (menuReason == "time_up" ? "The free practice time is over. " : "") +
+                       "You can start the tasks now, or first repeat any part of the practice.";
+        float hh = body.CalcHeight(new GUIContent(intro), w);
+        GUI.Label(new Rect(x, y, w, hh), intro, body);
+        y += hh + 18 * k;
+
+        float ih = 46F * k;
+        for (int i = 0; i < MenuItems.Length; i++)
+        {
+            bool sel = i == menuSel;
+            var row = new Rect(x, y, w, ih);
+            Fill(row, sel ? new Color(1F, 0.8F, 0.1F) : new Color(0.18F, 0.19F, 0.21F));
+            var st = new GUIStyle(body) { alignment = TextAnchor.MiddleLeft, fontStyle = sel ? FontStyle.Bold : FontStyle.Normal };
+            st.normal.textColor = sel ? new Color(0.08F, 0.08F, 0.08F) : new Color(0.9F, 0.9F, 0.92F);
+            GUI.Label(new Rect(row.x + 16 * k, row.y, row.width - 32 * k, row.height), (sel ? "> " : "   ") + MenuItems[i], st);
+            y += ih + 8 * k;
+        }
+        y += 10 * k;
+        string how = StickControls.Active
+            ? $"Move the hat switch up / down to choose, then press the {StickControls.ConfirmName}."
+            : "Use the D-pad up / down to choose, then press A.";
+        hint.normal.textColor = Color.white;
+        GUI.Label(new Rect(x, y, w, 60 * k), how, hint);
+    }
+
     // Info page: text and "press A" at the bottom of the panel (the yellow outline is drawn by DrawInfoOutline).
     void DrawInfo(Step s, float x, float y, float w, Rect panel, float k)
     {
-        string how = HowText(s);
+        string how = HowText(s).Replace("{HOLD}", StickControls.HoldConfirm);   // joystick or gamepad, as connected now
+        // Repeating a phase from the menu: drop the "Phase N is complete." lead-in of the phase start pages.
+        if (repeatOnly > 0 && s.redoPhase > 0)
+        {
+            int cut = how.IndexOf("\n\n");
+            if (cut >= 0) how = how.Substring(cut + 2);
+        }
         float hh = body.CalcHeight(new GUIContent(how), w);
         GUI.Label(new Rect(x, y, w, hh), how, body);
 
@@ -661,6 +866,8 @@ public class PracticeGuide : MonoBehaviour
         GUI.Label(a, StickControls.ConfirmBox, bigCenter);
         string cont = StickControls.Active ? $"Press the {StickControls.ConfirmName} to continue" : "Press A to continue";
         GUI.Label(new Rect(x + bw + 16F * k, by, w - bw - 16F * k, bs), ready ? cont : "Read this first...", title);
+
+
     }
 
     // Info page: pulsing yellow outline around the explained part of Display 1 (task panel, status bar, incidents).

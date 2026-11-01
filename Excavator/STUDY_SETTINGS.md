@@ -20,13 +20,17 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Walkthrough safety cap (walkthrough ends, free practice starts) | `GuideMaxSeconds` | 1200 s | `Study/Scenarios/PracticeGuide.cs` |
 | Walkthrough hint delay: no "not quite" / wrong-mode hint for the first seconds of a step, and only after continuous wrong input | `HintGraceSeconds`, `WrongBeforeHint` | 1.5 s, 0.5 s | `Study/Scenarios/PracticeGuide.cs` |
 | Experimenter: skip the current walkthrough step | gamepad Select/Back or keyboard N | – | `Study/Scenarios/PracticeGuide.cs` |
+| Phase 1 hold (progress) bar + green "Correct - keep holding" line also in the driver view (bottom centre, above the status bar), drive / dig steps only - shown while the instructions are on the instruction display | `PracticeGuide.ShowProgressInDriverView` (static switch) | `true` | `Study/Scenarios/PracticeGuide.cs` |
+| Redo a practice phase - experimenter: restart phase 1 / 2 / 3 (phase 3 = its instruction page; timer stops) - only after phases 1-3 were completed once; participants use the "Practice complete" menu | keyboard 1 / 2 / 3 | – | `Study/Scenarios/PracticeGuide.cs` |
+| Phase 3 (free practice) starts with an instruction page; its timer starts only when that page is continued with A | `phase3_intro` step | – | `Study/Scenarios/PracticeGuide.cs` |
+| After all 3 phases (hold A in phase 3, or its time is up): "Practice complete" menu - Start the tasks / Repeat phase 1 / 2 / 3. Choose with joystick hat or D-pad up/down (keyboard arrows), confirm with A (Enter). Only "Start the tasks" ends the practice. A phase repeated after the menu is played on its own and then returns to the menu | `OpenMenu`, `MenuInput`, `DrawMenu`, `MenuMinSeconds` (1 s) | – | `Study/Scenarios/PracticeGuide.cs` |
 | Practice trial on/off | setup screen toggle (gamepad Y) | on | `Study/StudyManager.cs` (`includePractice`) |
 | Condition order (Latin square) | `latinSquare` | C1-C2-C3 / C2-C3-C1 / C3-C1-C2 | `Study/StudyTypes.cs` |
 | Which scenarios are in the study | `scenarioOrder` | Driving, Digging, Dig and dump | `Study/StudyTypes.cs` |
 | Scenario shuffle seed / trial seeds | `BuildTrials` (`id*7919+17`, `id*1000`) | – | `Study/StudyTypes.cs` |
 | What each condition shows | `ShowContextViews` (C2+), `ShowAttentionCues` (C3) | – | `Study/StudyManager.cs` |
 | Briefing texts (condition + scenario) | `ConditionBriefing`, `ScenarioBriefing` | – | `Study/StudyTypes.cs` |
-| Questionnaire screen text | `OnGUI` → `State.Questionnaire` | SIM-TLX + SART | `Study/StudyManager.cs` |
+| Questionnaire screen text | `OnGUI` → `State.Questionnaire` | "Please fill in the questionnaires for this task." (SIM-TLX and SART collected outside the simulator) | `Study/StudyManager.cs` |
 | Start posture (boom up, arm vertical) | `Scenario.StartRetracted` (static switch) | `true` | `Study/Scenarios/Scenario.cs` |
 
 ## 2. Logging and incident feedback
@@ -49,10 +53,12 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | What | Setting | Default | File |
 |---|---|---|---|
 | Right camera panel width | `PanelWidth` (const) | 0.28 of screen | `Study/StudyLayout.cs` |
-| Measurement bar height | `BarHeight` (const) **and** `MeasurementBar.barHeight` (keep equal) | 72 px @1080p | `Study/StudyLayout.cs`, `Study/MeasurementBar.cs` |
+| Measurement bar height | `StudyLayout.BarHeightRef` **and** `MeasurementBar.barHeight` (keep equal); `StudyLayout.BarHeight` is computed from them at the current window size so the driver view always starts above the bar | 72 px @1080p | `Study/StudyLayout.cs`, `Study/MeasurementBar.cs` |
+| Input info box (live stick values / "No joystick connected" note), drawn just above the status bar; always shown while calibrating | `ExcavatorController.showFlightStickDebug` (Inspector) | `false` | `Excavator/ExcavatorController.cs` |
 | Gap between panel windows | `Gap` (const) | 0.006 | `Study/StudyLayout.cs` |
 | Measurement bar refresh rate | `refreshRateHz` | 10 Hz | `Study/MeasurementBar.cs` |
 | Which readouts are on the bar | `BuildUI()` (`Cell(...)` calls) | 9 readouts | `Study/MeasurementBar.cs` |
+| Mode display: text only (DRIVE / DIG) in the MODE cell of the status bar; top-right mode squares hidden | `ModeIndicatorIcons.ShowSceneIcons` (static switch) | `false` (squares hidden) | `Study/ModeIndicatorIcons.cs` |
 | Task panel size (text, incidents, mini-map) | `textH`, `incH`, `mapW` (const) | 118, 26, 130 | `Study/Scenarios/Scenario.cs` |
 | Context-aware views on their own display (Display 5, side by side) or on Display 1 stacked vertically in the right-hand panel | `StudyLayout.ContextViewsOnSeparateDisplay` (static switch); display number `ContextDisplayIndex` | `false` (Display 1, stacked) | `Study/StudyLayout.cs` |
 | Instructions and guidance (practice guide, task instruction screens, practice/task complete, pause) on their own display | `StudyLayout.InstructionsOnSeparateDisplay` (static switch) | `true` | `Study/StudyLayout.cs` |
@@ -144,7 +150,7 @@ All in `Study/Scenarios/Scenarios.cs` unless noted. Per-trial randomness uses `R
 |---|---|
 | Practice | phase 1 solid bucket (`EnableCuttingEdges(false)`); from phase 2: invisible dig zone all around the machine (max depth 1.5 m), dump anywhere, nothing marked (in `PracticeScenario.BuildDigSite`) |
 | Easy – Driving | `GateWidth` 10 m; `GatePassBefore` 1.5 m (gate counts when the machine centre is within 1.5 m before the gate line or up to 4 m past it); `gates[]` positions; `start`; `stopLine`; barrel positions + jitter; worker timings (`crosserAt` 0.5–3.5 s after gate 1, `behindAt` 1.5–3.5 s after gate 4, stops 4 s); finish = on line, < 1 km/h for 1 s |
-| Moderate – Digging | `FixedLayout` (static switch, `true` = same trench/cable/pipe/spoil layout in every trial from `LayoutSeed` 20261018 → cable right, spoil square left; worker timing still per trial); `TargetDepth` 1.2 m; Trench done % = smooth progress `TerrainDigger.ProgressTo` (each 0.5 m cell partial credit, full at target − `ProgressTolerance` 0.2 = 1.0 m), trial completed at `CompleteAt` 0.85 of the same number; `SpoilSize` 2.5 m; `SpoilMinGap` 5 m; `SpoilSwingDeg` 120°; `PipeBelowTarget` 0.25 m; `WorkerStandSeconds` 6 s; `workPos`; `StartBehind` 9 m; trench length 0.43 × reach; cable 0.9 m deep, 0.5–0.8 m outside the edge; worker at 45–110 s; bucket over worker = `OverWorkerRadius` 1.0 m (hinge→teeth segment, horizontal) and whole bucket above the worker's ground; over-dig = target + 0.35 m; (old whole-cell share `FractionDugTo` still logged as dug= in the summary) |
+| Moderate – Digging | `FixedLayout` (static switch, `true` = same trench/cable/pipe/spoil layout in every trial from `LayoutSeed` 20261018 → cable right, spoil square left; worker timing still per trial); `TargetDepth` 1.2 m; Trench done % = smooth progress `TerrainDigger.ProgressTo` (each 0.5 m cell partial credit, full at target − `ProgressTolerance` 0.2; the outer `ProgressWallMargin` 0.5 m strip along the walls and ends is not counted, because the sloped walls can never reach depth); the share of the floor really at target depth is only logged as `floor_at_depth` (no longer a completion condition), trial completed at `CompleteAt` 0.85 of the same number; `SpoilSize` 4.5 m (dump marker shown within 1 m of it, no height arrow over it); `SpoilMinGap` 5 m; `SpoilSwingDeg` 120°; `PipeBelowTarget` 0.2 m (pipe 1.8 m deep, warning from 1.65 m, strike at 1.75 m = over-dig limit); cable `CableGapMin`–`Max` 0.35–0.5 m outside the trench edge; `ServiceLinesOnGround` false (only marker posts, no painted lines, in all conditions); two worker events at ~25 % and ~60 % trench progress (latest 100 s / 180 s); `WorkerStandSeconds` 6 s; `workPos`; `StartBehind` 9 m; trench length 0.43 × reach; cable 0.9 m deep, 0.5–0.8 m outside the edge; worker at 45–110 s; bucket over worker = `OverWorkerRadius` 1.0 m (hinge→teeth segment, horizontal) and whole bucket above the worker's ground; over-dig = target + 0.35 m; (old whole-cell share `FractionDugTo` still logged as dug= in the summary) |
 | Hard – Dig and dump | `Goal` 4 loads; `Limit` 360 s; lane waypoints `W1`, `W2`, `WP`; `TruckOffset` 0.75 × reach; `PowerLineHeight` 5.8 m; `PowerLineBeyondTruck` 1.6 m; `PitPipeEnabled` true; `PipeDepth` 1.2 m; pit 4.5 m; workers at 35–90 s (pit) and 150–230 s (truck); dig target for cues = `PipeDepth − 0.3` m |
 | Task panel text | `TaskText`, `ProgressText` in each scenario class |
 | Time limit per scenario | `TimeLimitSeconds` override (else `trialDurationSeconds`) — `Study/Scenarios/Scenario.cs` |
@@ -168,11 +174,35 @@ All in `Study/Scenarios/Scenarios.cs` unless noted. Per-trial randomness uses `R
 
 | What | Settings (default) | File |
 |---|---|---|
-| Bucket filling and dumping | `dragMetersToFill` 1.5 m, `curlDegreesToFill` 70°, `minScoop` 0.25, `dumpAngle` 140°, `dumpMinHeight` 0.5 m, `cutTolerance` 0.15 m, `zoneMargin` 0.5 m | `Study/World/BucketLoad.cs` |
+| Bucket filling and dumping | **`bucketCapacity` 1.2 m³** (bucket fills by the soil volume actually cut; a full bucket cuts nothing more), cut width `TerrainDigger.CutRadius` 0.6 m each side of the teeth, `dragMetersToFill` / `curlDegreesToFill` (only detect scooping motion: soil enters ONLY while curling in or pulling towards the cab), `minScoop` 0.25, `dumpAngle` 140°, `dumpMinHeight` 0.5 m, `cutTolerance` 0.15 m, `zoneMargin` 0.5 m | `Study/World/BucketLoad.cs` |
 | Bucket/arm stopped by truck walls | `bucketProbeRadius` 0.25, `armProbeRadius` 0.25, `bucketHalfWidth` 0.45 m, `impactSpeed` 0.5 m/s (incident threshold) | `Study/World/BucketBlocker.cs` |
+| Buried bucket held by the soil: no swinging sideways (`swing_blocked_soil`) and no pushing out away from the cab — arm out or opening the bucket; raising the boom is always allowed (`push_blocked_soil`) — into undug soil | `SoilSideBlocker.Enabled` / `BlockPushOut` (static switches), `sideGap` / `frontGap` 0.7 m, `embedTolerance` 0.15 m | `Study/World/SoilSideBlocker.cs` |
 | Terrain digging | `Dig(tip, radius = 0.9)`, `FractionDugTo(depth, tolerance = 0.15)`, `EndlessSoil`, `riverBankHeight` | `Study/World/TerrainDigger.cs` |
 | Truck bed size | `TruckBedLength` 6 m, `TruckBedWidth` 3.2 m (const) | `Study/World/WorldBuilder.cs` |
 | Worker walking speed / stride | `speed` 1.3 m/s, `stride` 28° | `Study/World/WorldBuilder.cs` (`WorkerWalker`) |
 | Gamepad dead zone | `deadZone` 0.1 | `Excavator/ExcavatorInput.cs` |
 | Stick → joint mapping, mode button | `ReadGamepad()`, `ModeTogglePressedThisFrame()` | `Excavator/ExcavatorInput.cs` |
 | Machine speed / acceleration | `maxSpeed`, `creepSpeed`, `initialAccel`, `maxAccel`, … | `Excavator/Excavator.cs` (Inspector on the scene object; these *are* saved in the scene) |
+
+## Digging measures (end-of-trial `scenario_summary`, trench task)
+
+Continuous measures, one group per C3 cue, so a cue effect shows even when no incident happens:
+
+| C3 cue | What it is for | Measures |
+|---|---|---|
+| Horizontal line on the ground (teeth position) | Not digging outside the trench | `outside_s` (s with the teeth > 0.1 m deep outside the trench), `outside_max` (m furthest beyond the edge) |
+| Dashed line (buried services) | Position and alignment of the cable and pipe | `pipe_min`, `cable_min` (m, closest teeth distance), `pipe_warn_s`, `cable_warn_s` (s within warning distance); strikes as before |
+| Underground depth markers, depth gauge | How deep is dug / the right depth | `floor_mean`, `floor_rmse` (m from 1.6 m), `floor_in_band` / `floor_under` / `floor_over` (share of the floor within 1.5–1.75 m, shallower, deeper) — only the part of the floor 4.5–6.0 m from the machine (`ReachBandMin`/`Max`, the part that can be dug to depth; `floor_points` = sample points used); `floor_all_*` = whole floor for reference; `over_dig_m3`, `over_dig_s`, `dug_m3` |
+| Target sign in the dump pit | Dumping on the square, no spills | `dump_offset_mean` / `dump_offset_max` (m from the square's centre), `dump_edge_mean` (0 centre, 1 edge, >1 outside), `spilled_m3` of `dumped_m3`; each dump also logged as `dump_position` |
+| (worker attention cues) | Noticing the worker | `worker_events`, `over_worker_s`; latency and minimum distance per event in `hazard_response` / `hazard_clear` |
+
+Work position: the machine counts as arrived when its swing centre is within `WorkPosTolerance` 0.7 m of the work position (was 1.2 m; box drawn 5.0 × 4.0 m). The stopping offset is logged (`at_work_position;offset_along/across`, summary `work_offset_along/across`).
+
+## SIM-TLX on the instruction screen (`Study/SimTlxForm.cs`)
+
+**Currently OFF** (`SimTlxForm.Enabled = false`, since 2026-11-01): the SIM-TLX is collected separately, outside the simulator. The description below applies only if it is switched back on.
+
+After every measured task (not the practice) the participant rates the nine SIM-TLX dimensions (mental, physical, temporal demands, frustration, task complexity, situational stress, distraction, perceptual strain, task control) on a 0–20 scale (Very low – Very high) on the instruction screen, then the screen asks for the SART on paper.
+Controls: joystick hat up/down = question, stick or hat left/right = rating, thumb button = next / submit (gamepad: D-pad, left stick, A; keyboard for testing: arrows + Space). All nine must be rated before submitting.
+Saved in the events log (`sim_tlx`, with the time taken) and in `P01_<date>_questionnaire.csv` (one row per task, raw 0–20 values and the mean). Experimenter: Enter skips the form (`sim_tlx_skipped`). Off: `SimTlxForm.Enabled = false`. Check the item wording in `SimTlxForm.cs` against the SIM-TLX version you cite.
+

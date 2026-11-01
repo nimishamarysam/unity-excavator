@@ -33,9 +33,15 @@ public class PracticeScenario : Scenario
     {
         get
         {
-            if (guide != null && !guide.Done) return InstructionDisplay.Active ? "Follow the instructions on the instruction screen." : "Follow the instructions on the right.";
+            string follow = InstructionDisplay.Active ? "Follow the instructions on the instruction screen." : "Follow the instructions on the right.";
+            // Free-practice instruction page: show the full time, not running yet.
+            if (guide != null && guide.OnFreePracticeIntro && SM != null)
+            {
+                float full = SM.practiceDurationSeconds;
+                return follow + $"\nTime: {Mathf.FloorToInt(full / 60F)}:{Mathf.FloorToInt(full % 60F):00} (starts when you press {StickControls.ConfirmLabel})";
+            }
+            if (guide != null && (!guide.Done || guide.MenuOpen)) return follow;
             string text = $"Practise on your own. {StickControls.HoldConfirm} when you are ready to start the tasks.";
-            if (siteBuilt) text += $"  Dumps: {Dumps}";
             if (SM != null)
             {
                 float start = guide != null ? guide.DoneAt : 0F;
@@ -210,7 +216,7 @@ public class DrivingScenario : Scenario
 // MODERATE - DIGGING: drive to the work position, dig a trench to 1.6 m (TargetDepth), dump spoil on the white square.
 // Task demands:
 //   - Some driving: the machine starts 9 m behind the work position (yellow box) and must drive there first.
-//   - Strict spoil placement: small spoil square (2.5 m) at least 5 m from the trench edge, about 120 degrees
+//   - Strict spoil placement: spoil square (4.5 m) at least 5 m from the trench edge, about 120 degrees
 //     swing from the trench, on the side away from the cable. Dumps outside it are spills; dumps within 5 m
 //     of the trench edge are logged as "too_close_to_trench" spills.
 //   - Buried cable parallel to the trench (0.5-0.8 m outside the edge, 0.9 m deep), marked with orange posts.
@@ -230,16 +236,35 @@ public class DiggingScenario : Scenario
     // length 0.5 (to ~8.5 m): the far end could not be dug to depth and progress stopped around 79 %.
     const float TrenchCentreOfReach = 0.54F;
     const float TrenchLengthOfReach = 0.31F;
-    const float SpoilSize = 2.5F;             // was 3.5 m
+    const float SpoilSize = 4.5F;             // was 2.5 m: a full trench of soil (~10 m3 at 1.2 m3 per bucket) overflowed it
     const float SpoilMinGap = 5F;             // minimum distance between spoil square and trench edge
     const float SpoilSwingDeg = 120F;         // swing angle from the trench direction to the spoil square
-    const float PipeBelowTarget = 0.25F;      // crossing pipe depth below the target depth
+    const float PipeBelowTarget = 0.2F;       // crossing pipe depth below the target depth (was 0.25: digging just past the
+                                              // target now comes close to it, so depth control matters)
+    // Buried cable: this far outside the trench edge (m). Was 0.5-0.8 m (almost never reached); now digging right at the
+    // trench wall (or leaning the bucket past it) comes within its warning distance.
+    const float CableGapMin = 0.35F, CableGapMax = 0.5F;
+    // Surface marks of the buried services in ALL conditions: false = only the marker posts (as on a real site);
+    // true = also the painted lines on the ground (the old layout, which showed the C3 dashed line's information to everybody).
+    public static bool ServiceLinesOnGround = false;
+    // Worker events: the worker walks to the trench edge when the trench is about this far done (+-0.05, per trial),
+    // or at the latest at the given trial time - so every participant meets the same number of events at a similar stage.
+    static readonly float[] WorkerAtProgress = { 0.25F, 0.6F };
+    static readonly float[] WorkerLatest = { 100F, 180F };
     const float WorkerStandSeconds = 6F;
     // Trench done %: smooth progress (TerrainDigger.ProgressTo) - each 0.5 m cell gives partial credit up to
     // full at TargetDepth - ProgressTolerance (1.0 m). The trial is completed at CompleteAt of the SAME number
     // the participant sees. (The old whole-cell share is still logged as dug= in the summary.)
     const float ProgressTolerance = 0.2F;
+    // Edge strip (m) of the trench NOT counted in "Trench done": the walls slope (see TerrainDigger.ProgressTo) and the
+    // row nearest the cab is barely reachable at depth, so with 0 the number stalled at ~76 % when the trench already
+    // looked finished (pilot 2026-10-31). 0.5 m = the trench floor the operator can actually dig.
+    const float ProgressWallMargin = 0.5F;
     const float CompleteAt = 0.85F;
+    // Logged only (floor_at_depth): share of the trench floor dug to TargetDepth - AtDepthTolerance. Not a completion
+    // condition any more (removed 2026-10-31).
+    const float AtDepthTolerance = 0.1F;
+    float FloorAtDepth => TerrainDigger.Instance.FractionDugTo(TargetDepth, AtDepthTolerance, ProgressWallMargin);
     // FIXED LAYOUT: true = trench, cable side, pipe position and spoil square are the SAME in every trial
     // (C1, C2, C3 and every participant), drawn from LayoutSeed; only the worker's timing still comes from the
     // trial seed. Keeps the three conditions comparable. false = everything from the trial seed (layout varies).
@@ -249,6 +274,12 @@ public class DiggingScenario : Scenario
 
     static readonly Vector3 workPos = new Vector3(-16.5F, 0, -7.5F);
     const float StartBehind = 9F;             // metres behind the work position at the start
+    // Machine counts as "at the work position" when its swing centre is this close to workPos (was 1.2 m: the trench then
+    // started anywhere from 3.1 to 4.0 m from the machine, which changed how deep each part of it could be dug).
+    const float WorkPosTolerance = 0.7F;
+    // Depth-accuracy measures (floor_*) use only the part of the trench floor the teeth can dig to depth from the work
+    // position: this distance band from the swing centre (pilot tip_max: >= 1.6 m from about 4.5 to 6.0 m).
+    const float ReachBandMin = 4.5F, ReachBandMax = 6.0F;
 
     BucketLoad load;
     Vector3 trench, spoil, f, r;
@@ -257,18 +288,20 @@ public class DiggingScenario : Scenario
     bool overDigArmed = true, arrived;
     SegmentHazard cable, pipe;
     WorkerWalker worker;
-    float workerAt, workerUntil = -1F;
+    float workerUntil = -1F;
+    float[] workerAtProgress;
+    int workerEvents;
     bool overLogged, swingLogged;
     float prevAngleToWorker = -1F;
     Hazard.Level pipeLevel, cableLevel;
 
     public override string TaskText => arrived ? $"Dig the trench between the stakes to {TargetDepth:0.0} m deep"
-                                               : $"Drive into the yellow box ({StickControls.ModeSwitch} for travel mode)";
+                                               : $"Drive into the yellow box ({StickControls.ModeSwitch} for DRIVE mode)";
     public override Vector3? DumpTarget => spoil;
     public override float? DigTargetDepth => TargetDepth;
     public override bool DumpArea(out Vector3 c, out Vector3 fw, out float len, out float wid) { c = spoil; fw = f; len = wid = SpoilSize; return true; }
     public override string ProgressText => arrived
-        ? $"Trench done: {TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
+        ? $"Trench done: {TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance, ProgressWallMargin) * 100F:0}%   Deepest: {maxDepth:0.00} m   " +
           "Dump soil ONLY on the small white square. Avoid the orange cable and the yellow pipe markers."
         : $"Then {StickControls.ModeSwitch} again for digging mode.";
 
@@ -298,11 +331,11 @@ public class DiggingScenario : Scenario
         Outline("trench", trench, f, trenchLen, TrenchWidth, BucketLoad.SoilMaterial().color);
 
         // Work position box (where the machine should stand while digging).
-        Outline("work", WorldBuilder.OnGround(workPos), f, 5.5F, 4.5F, WorldBuilder.Yellow);
+        Outline("work", WorldBuilder.OnGround(workPos), f, 5.0F, 4.0F, WorldBuilder.Yellow);   // was 5.5 x 4.5 m
 
-        // Buried cable: parallel to the trench, 0.5-0.8 m outside its edge, 0.9 m deep. Side is random.
+        // Buried cable: parallel to the trench, CableGapMin-Max outside its edge, 0.9 m deep. Side is random.
         side = Rng.NextDouble() < 0.5 ? 1F : -1F;
-        float offset = side * (hw + Rand(0.5F, 0.8F));
+        float offset = side * (hw + Rand(CableGapMin, CableGapMax));
         Vector3 a = trench - f * (trenchLen / 2F + 2F) + r * offset, b = trench + f * (trenchLen / 2F + 2F) + r * offset;
         cable = new GameObject("BuriedCable").AddComponent<SegmentHazard>();
         cable.transform.SetParent(Root);
@@ -312,7 +345,7 @@ public class DiggingScenario : Scenario
         cable.measure = HazardMeasure.BucketTeethOnly; cable.warnDistance = 0.7F; cable.contactDistance = 0.3F;
         for (float s = 0; s <= 1.001F; s += 0.25F)
             WorldBuilder.Shape(PrimitiveType.Cylinder, Root, "CableMarker", Vector3.Lerp(a, b, s), new Vector3(0.1F, 0.5F, 0.1F), WorldBuilder.Orange, 0, false);
-        WorldBuilder.GroundMark(Root, "CableLine", WorldBuilder.OnGround((a + b) / 2F), (b - a).magnitude, 0.1F, 90F, WorldBuilder.Orange);
+        if (ServiceLinesOnGround) WorldBuilder.GroundMark(Root, "CableLine", WorldBuilder.OnGround((a + b) / 2F), (b - a).magnitude, 0.1F, 90F, WorldBuilder.Orange);
 
         // Crossing service: a pipe across the trench, 0.25 m below the target depth, in the middle part of the trench.
         Vector3 cross = trench + f * Rand(-0.2F, 0.2F) * trenchLen;
@@ -323,13 +356,13 @@ public class DiggingScenario : Scenario
         pipe.a = new Vector3(pa.x, TerrainDigger.ReferenceGroundHeight(pa) - pipeDepth, pa.z);
         pipe.b = new Vector3(pb.x, TerrainDigger.ReferenceGroundHeight(pb) - pipeDepth, pb.z);
         pipe.hazardId = "crossing_pipe"; pipe.kind = HazardKind.BuriedPipe;
-        pipe.measure = HazardMeasure.BucketTeethOnly; pipe.warnDistance = 0.2F; pipe.contactDistance = 0.08F;
+        pipe.measure = HazardMeasure.BucketTeethOnly; pipe.warnDistance = 0.15F; pipe.contactDistance = 0.05F;   // pipe 1.8 m deep: warning from 1.65 m, strike at 1.75 m (= the over-dig limit)
         // Markers only OUTSIDE the trench (a mark across the hole would float in the air once dug).
         foreach (float sgn in new[] { -1F, 1F })
         {
             Vector3 post = cross + r * sgn * (hw + 0.9F);
             WorldBuilder.Shape(PrimitiveType.Cylinder, Root, "PipeMarker", post, new Vector3(0.12F, 0.55F, 0.12F), WorldBuilder.Yellow, 0, false);
-            WorldBuilder.GroundMark(Root, "PipeLine", WorldBuilder.OnGround(cross + r * sgn * (hw + 0.75F)), 1.5F, 0.12F, 0F, WorldBuilder.Yellow);
+            if (ServiceLinesOnGround) WorldBuilder.GroundMark(Root, "PipeLine", WorldBuilder.OnGround(cross + r * sgn * (hw + 0.75F)), 1.5F, 0.12F, 0F, WorldBuilder.Yellow);
         }
 
         // Trench edge: warns when the TRACKS get close to the trench.
@@ -360,14 +393,24 @@ public class DiggingScenario : Scenario
         worker = WorldBuilder.Worker(Root, "WorkerAtTrench", stand + r * (-side) * 12F + f * 4F);
         worker.Hide();
         Rng = trialRng;                                       // event timing varies per trial
-        workerAt = Rand(45F, 110F);
+        workerAtProgress = new float[WorkerAtProgress.Length];
+        for (int i = 0; i < workerAtProgress.Length; i++) workerAtProgress[i] = WorkerAtProgress[i] + Rand(-0.05F, 0.05F);
         workerStand = stand;
 
         load = gameObject.AddComponent<BucketLoad>();
         load.Init(M);
         load.Dumped += p =>
         {
-            if (InRect(p, spoil, f, SpoilSize, SpoilSize, 0.3F)) { spoilDumps++; StudyLogger.Log("dump", $"spoil_area;amount={load.LastDumpAmount:F2}"); }
+            // Continuous: where the soil was released relative to the spoil square (0 = centre, 1 = edge, >1 = outside).
+            Vector3 dd = p - spoil;
+            float off = new Vector2(dd.x, dd.z).magnitude;
+            float u = Mathf.Max(Mathf.Abs(Vector3.Dot(dd, f)), Mathf.Abs(Vector3.Dot(dd, r))) / (SpoilSize / 2F);
+            float vol = load.LastDumpAmount * load.bucketCapacity;
+            dumpCount++; dumpOffsetSum += off; dumpOffsetMax = Mathf.Max(dumpOffsetMax, off); dumpEdgeSum += u; dumpedM3 += vol;
+            bool inside = InRect(p, spoil, f, SpoilSize, SpoilSize, 0.3F);
+            if (!inside) spilledM3 += vol;
+            StudyLogger.Log("dump_position", $"offset={off:F2};edge={u:F2};m3={vol:F2}");
+            if (inside) { spoilDumps++; StudyLogger.Log("dump", $"spoil_area;amount={load.LastDumpAmount:F2}"); }
             else if (GapToTrench(p, 0F) < SpoilMinGap) { spills++; tooClose++; StudyLogger.Log("spill", $"too_close_to_trench;gap={GapToTrench(p, 0F):F2};amount={load.LastDumpAmount:F2}"); }
             else { spills++; StudyLogger.Log("spill", $"outside_spoil_area;amount={load.LastDumpAmount:F2}"); }
         };
@@ -378,6 +421,11 @@ public class DiggingScenario : Scenario
     }
 
     Vector3 workerStand;
+    // Continuous measures (end-of-trial summary)
+    int dumpCount;
+    float dumpOffsetSum, dumpOffsetMax, dumpEdgeSum, dumpedM3, spilledM3;
+    float overDigSeconds, outsideSeconds, outsideMax, overWorkerSeconds;
+    float pipeMin = float.MaxValue, cableMin = float.MaxValue, pipeWarnSeconds, cableWarnSeconds;
     readonly System.Collections.Generic.SortedDictionary<int, float> tipMaxByDist = new System.Collections.Generic.SortedDictionary<int, float>();
 
     string TipEnvelope()
@@ -403,10 +451,10 @@ public class DiggingScenario : Scenario
         if (!arrived)
         {
             Vector3 c = M.SwingCenter;
-            if (new Vector2(c.x - workPos.x, c.z - workPos.z).magnitude < 1.2F)
+            if (new Vector2(c.x - workPos.x, c.z - workPos.z).magnitude < WorkPosTolerance)
             {
                 arrived = true;
-                StudyLogger.Log("stage", "at_work_position");
+                StudyLogger.Log("stage", $"at_work_position;offset_along={Vector3.Dot(c - workPos, f):F2};offset_across={Vector3.Dot(c - workPos, r):F2}");
             }
         }
 
@@ -423,6 +471,22 @@ public class DiggingScenario : Scenario
         }
         if (depth < 0F) overDigArmed = true;
 
+        // Continuous measures (only once at the work position, so driving there does not count).
+        if (arrived)
+        {
+            float dt = Time.fixedDeltaTime;
+            if (TerrainDigger.Instance.Contains(tip) && depth > TargetDepth + OverDigTolerance) overDigSeconds += dt;
+            if (!TerrainDigger.Instance.Contains(tip) && depth > 0.1F)
+            {   // teeth in the ground outside the marked trench
+                outsideSeconds += dt;
+                outsideMax = Mathf.Max(outsideMax, GapToTrench(tip, 0F));
+            }
+            float dp = (pipe.ClosestPointTo(tip) - tip).magnitude, dc = (cable.ClosestPointTo(tip) - tip).magnitude;
+            pipeMin = Mathf.Min(pipeMin, dp); cableMin = Mathf.Min(cableMin, dc);
+            if (dp <= pipe.warnDistance) pipeWarnSeconds += dt;
+            if (dc <= cable.warnDistance) cableWarnSeconds += dt;
+        }
+
         // Strikes (contact level reached) of the buried services.
         if (pipe.CurrentLevel == Hazard.Level.Contact && pipeLevel != Hazard.Level.Contact) pipeStrikes++;
         if (cable.CurrentLevel == Hazard.Level.Contact && cableLevel != Hazard.Level.Contact) cableStrikes++;
@@ -430,7 +494,7 @@ public class DiggingScenario : Scenario
 
         WorkerEvent(t, tip);
 
-        if (TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance) >= CompleteAt) Complete("completed");
+        if (TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance, ProgressWallMargin) >= CompleteAt) Complete("completed");
     }
 
     // Horizontal (x/z) distance from p to the segment a-b.
@@ -444,15 +508,19 @@ public class DiggingScenario : Scenario
     // One worker walks to the trench edge (inside the swing path to the spoil square), waits, and walks away.
     void WorkerEvent(float t, Vector3 tip)
     {
-        if (workerAt > 0F && t >= workerAt)
+        // Next worker event: when the trench is far enough along (or at the latest time), and not while one is running.
+        if (arrived && workerEvents < workerAtProgress.Length && t > workerUntil
+            && (TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance, ProgressWallMargin) >= workerAtProgress[workerEvents]
+                || t >= WorkerLatest[workerEvents]))
         {
-            workerAt = -1F;
+            workerEvents++;
             Vector3 from = workerStand + r * (-side) * 12F + f * 4F;
             worker.Appear(from);
             worker.WalkTo(workerStand, WorkerStandSeconds);
             worker.WalkTo(from);
             workerUntil = t + 30F;
-            StudyLogger.Log("event_start", "worker_at_trench");
+            StudyLogger.Log("event_start", $"worker_at_trench;n={workerEvents}");
+            overLogged = false; swingLogged = false; prevAngleToWorker = -1F;
         }
         if (workerUntil < 0F || t > workerUntil || !worker.gameObject.activeInHierarchy) return;
 
@@ -467,6 +535,7 @@ public class DiggingScenario : Scenario
         float hd = FlatDistanceToSegment(wp, piv, tip);
         float low = Mathf.Min(piv.y, tip.y) - wp.y;
         bool over = hd < OverWorkerRadius && low > 0F;
+        if (over) overWorkerSeconds += Time.fixedDeltaTime;
         if (over && !overLogged) { bucketOverWorker++; overLogged = true; StudyLogger.Log("bucket_over_worker", $"dist_h={hd:F2};height={low:F2}"); }
         if (!over && hd > OverWorkerRadius + 1.5F) overLogged = false;
 
@@ -484,11 +553,42 @@ public class DiggingScenario : Scenario
     }
 
     public override string Summary() =>
-        $"progress={TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance):F2};dug={TerrainDigger.Instance.FractionDugTo(TargetDepth):F2};scoops={load.Scoops};spoil_dumps={spoilDumps};spills={spills};" +
+        $"progress={TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance, ProgressWallMargin):F2};dug={TerrainDigger.Instance.FractionDugTo(TargetDepth, 0.15F, ProgressWallMargin):F2};floor_at_depth={FloorAtDepth:F2};progress_full_zone={TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance):F2};scoops={load.Scoops};spoil_dumps={spoilDumps};spills={spills};" +
         $"too_close={tooClose};over_digs={overDigs};max_depth={maxDepth:F2};pipe_strikes={pipeStrikes};cable_strikes={cableStrikes};" +
         $"bucket_over_worker={bucketOverWorker};swing_toward_worker={swingTowardWorker};arrived={(arrived ? 1 : 0)};" +
         // Diagnostic: how deep each row of the trench got, near end -> far end ("distance from swing centre : mean/min depth").
-        $"reach={M.MaxReach:F2};rows={TerrainDigger.Instance.DepthProfile(M.SwingCenter)};tip_max={TipEnvelope()}";
+        $"reach={M.MaxReach:F2};rows={TerrainDigger.Instance.DepthProfile(M.SwingCenter)};tip_max={TipEnvelope()};" +
+        Metrics();
+
+    // CONTINUOUS MEASURES, one per C3 cue (see STUDY_SETTINGS.md, "Digging measures"):
+    //   teeth line on the ground  -> outside_s, outside_max            (digging outside the marked trench)
+    //   dashed buried-service line -> pipe_min, pipe_warn_s, cable_min, cable_warn_s
+    //   underground depth markers / depth gauge -> floor_mean, floor_rmse, floor_in_band, floor_under, floor_over
+    //                                 (reachable band ReachBandMin-Max only; floor_all_* = whole floor),
+    //                                 over_dig_m3, over_dig_s
+    //   dump target sign          -> dump_offset_mean / max (m from the square's centre), dump_edge_mean (0 centre, 1 edge),
+    //                                 spilled_m3 of dumped_m3
+    //   worker events             -> worker_events, over_worker_s (latency and min distance: hazard_response / hazard_clear)
+    string Metrics()
+    {
+        var d = TerrainDigger.Instance;
+        // Main depth measures: reachable band only (same for everybody, whatever the exact stopping position).
+        d.FloorStats(TargetDepth, 0.1F, OverDigTolerance, ProgressWallMargin, M.SwingCenter, ReachBandMin, ReachBandMax,
+                     out float mean, out float rmse, out float band, out float under, out float over, out int nPts);
+        // Whole floor (for reference).
+        d.FloorStats(TargetDepth, 0.1F, OverDigTolerance, ProgressWallMargin, out float meanAll, out float rmseAll, out float bandAll, out _, out _);
+        Vector3 wo = M.SwingCenter - workPos;
+        d.DugVolumes(TargetDepth + OverDigTolerance, out float dug, out float overM3);
+        string M2(float v) => v == float.MaxValue ? "NA" : v.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+        return $"floor_mean={mean:F2};floor_rmse={rmse:F2};floor_in_band={band:F2};floor_under={under:F2};floor_over={over:F2};floor_points={nPts};" +
+               $"floor_all_mean={meanAll:F2};floor_all_rmse={rmseAll:F2};floor_all_in_band={bandAll:F2};" +
+               $"work_offset_along={Vector3.Dot(wo, f):F2};work_offset_across={Vector3.Dot(wo, r):F2};" +
+               $"dug_m3={dug:F2};over_dig_m3={overM3:F2};over_dig_s={overDigSeconds:F1};outside_s={outsideSeconds:F1};outside_max={outsideMax:F2};" +
+               $"pipe_min={M2(pipeMin)};pipe_warn_s={pipeWarnSeconds:F1};cable_min={M2(cableMin)};cable_warn_s={cableWarnSeconds:F1};" +
+               $"dumps={dumpCount};dump_offset_mean={(dumpCount > 0 ? dumpOffsetSum / dumpCount : 0F):F2};dump_offset_max={dumpOffsetMax:F2};" +
+               $"dump_edge_mean={(dumpCount > 0 ? dumpEdgeSum / dumpCount : 0F):F2};dumped_m3={dumpedM3:F2};spilled_m3={spilledM3:F2};" +
+               $"worker_events={workerEvents};over_worker_s={overWorkerSeconds:F1}";
+    }
 }
 
 // HARD - DIG AND DUMP: load the truck 4 times before time runs out (6 minutes).

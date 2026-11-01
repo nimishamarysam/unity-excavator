@@ -252,14 +252,20 @@ public class TerrainDigger : MonoBehaviour
         return Mathf.Abs(Vector3.Dot(d, axisU)) <= halfU + margin && Mathf.Abs(Vector3.Dot(d, axisV)) <= halfV + margin;
     }
 
-    // Lower the ground around the bucket teeth. Returns true if any ground was removed.
-    public bool Dig(Vector3 tip, float radius = 0.9F)
+    // Width of the cut: soil is removed in a circle of this radius around the teeth (about the bucket width,
+    // 1.2 m; BucketBlocker.bucketHalfWidth = 0.45 m). Was 0.9 m (1.8 m wide), which cut far more than a bucket.
+    public const float CutRadius = 0.6F;
+
+    // Lower the ground around the bucket teeth, removing at most maxVolume (m3). Returns the volume removed (m3).
+    // If the full cut would be more than maxVolume, every point is lowered only part of the way, so the bucket
+    // never takes more soil than it has room for.
+    public float Dig(Vector3 tip, float radius = CutRadius, float maxVolume = float.MaxValue)
     {
-        if (terrain == null || !Contains(tip, 0.3F)) return false;
+        if (terrain == null || maxVolume <= 0F || !Contains(tip, 0.3F)) return 0F;
 
         Vector3 tp = terrain.transform.position, size = working.size;
         int res = working.heightmapResolution;
-        float cell = size.x / (res - 1);
+        float cell = size.x / (res - 1), cellArea = cell * (size.z / (res - 1));
         int cx = Mathf.RoundToInt((tip.x - tp.x) / cell), cz = Mathf.RoundToInt((tip.z - tp.z) / cell);
         int r = Mathf.CeilToInt(radius / cell);
         int x0 = Mathf.Clamp(cx - r, 0, res - 1), z0 = Mathf.Clamp(cz - r, 0, res - 1);
@@ -267,38 +273,60 @@ public class TerrainDigger : MonoBehaviour
         int w = x1 - x0 + 1, h = z1 - z0 + 1;
 
         float[,] heights = working.GetHeights(x0, z0, w, h);   // [z, x], values 0..1
-        bool changed = false;
+        float[,] target = new float[h, w];
+        float volume = 0F;
         for (int iz = 0; iz < h; iz++)
             for (int ix = 0; ix < w; ix++)
             {
+                target[iz, ix] = heights[iz, ix];
                 Vector3 wp = new Vector3(tp.x + (x0 + ix) * cell, 0, tp.z + (z0 + iz) * cell);
                 if (!Contains(wp) || (new Vector2(wp.x - tip.x, wp.z - tip.z)).magnitude > radius) continue;
                 float refY = ReferenceGroundHeight(wp);
                 float targetY = Mathf.Max(tip.y, refY - maxDepth);
                 float targetN = (targetY - tp.y) / size.y;
-                if (targetN < heights[iz, ix]) { heights[iz, ix] = targetN; changed = true; }
+                if (targetN < heights[iz, ix])
+                {
+                    target[iz, ix] = targetN;
+                    volume += (heights[iz, ix] - targetN) * size.y * cellArea;
+                }
             }
-        if (changed) working.SetHeights(x0, z0, heights);
+        if (volume <= 0F) return 0F;
+        float share = volume > maxVolume ? maxVolume / volume : 1F;   // bucket nearly full: cut only part of the way
+        for (int iz = 0; iz < h; iz++)
+            for (int ix = 0; ix < w; ix++)
+                heights[iz, ix] -= (heights[iz, ix] - target[iz, ix]) * share;
+        working.SetHeights(x0, z0, heights);
         PaintSoil(tip, radius);   // touched ground turns brown, even at the bottom of the hole
-        return changed;
+        return volume * share;
     }
 
-    // Smooth progress (0..1): the average over the same 0.5 m grid of how far each cell is dug towards the
+    // Smooth progress (0..1): the average over a 0.5 m grid of how far each cell is dug towards the
     // depth, each cell capped at 1 (full credit at depth - tolerance). Rises with every scoop instead of
     // only when a whole cell reaches depth, so the "Trench done" number follows what the operator sees.
-    public float ProgressTo(float depth, float tolerance = 0.2F)
+    // inset = metres kept free of sample points along the zone edges. Dig() only lowers terrain vertices INSIDE
+    // the zone, so the ground right at the edge is a sloped wall (interpolated with the undug ground outside)
+    // and can never reach depth - without an inset those edge cells cap the progress at ~75-80 %.
+    public float ProgressTo(float depth, float tolerance = 0.2F, float inset = 0F)
     {
         if (!hasZone) return 0F;
         float full = Mathf.Max(0.05F, depth - tolerance), sum = 0F;
         int total = 0;
-        for (float u = -halfU + 0.25F; u <= halfU - 0.25F; u += 0.5F)
-            for (float v = -halfV + 0.25F; v <= halfV - 0.25F; v += 0.5F)
-            {
-                Vector3 p = center + axisU * u + axisV * v;
-                total++;
-                sum += Mathf.Clamp01((ReferenceGroundHeight(p) - CurrentGroundHeight(p)) / full);
-            }
+        foreach (var p in Grid(inset))
+        {
+            total++;
+            sum += Mathf.Clamp01((ReferenceGroundHeight(p) - CurrentGroundHeight(p)) / full);
+        }
         return total == 0 ? 0F : sum / total;
+    }
+
+    // Sample points: a 0.5 m grid centred in the zone, 'inset' metres away from every edge (at least one row / column).
+    System.Collections.Generic.IEnumerable<Vector3> Grid(float inset)
+    {
+        int nu = Mathf.Max(1, Mathf.FloorToInt(2F * (halfU - inset) / 0.5F + 0.001F));
+        int nv = Mathf.Max(1, Mathf.FloorToInt(2F * (halfV - inset) / 0.5F + 0.001F));
+        for (int iu = 0; iu < nu; iu++)
+            for (int iv = 0; iv < nv; iv++)
+                yield return center + axisU * ((iu - (nu - 1) * 0.5F) * 0.5F) + axisV * ((iv - (nv - 1) * 0.5F) * 0.5F);
     }
 
     // DIAGNOSTIC: dug depth per 0.5 m row ACROSS the zone, from the end nearest 'from' to the far end.
@@ -326,18 +354,70 @@ public class TerrainDigger : MonoBehaviour
         return sb.ToString();
     }
 
-    // Share of the zone (0..1) that has been dug at least to the given depth.
-    public float FractionDugTo(float depth, float tolerance = 0.15F)
+    // ---- Continuous measures for the end-of-trial summary ----
+
+    // Trench floor (same sample grid as ProgressTo, 'inset' from the edges) compared with the target depth:
+    // mean depth, RMS error to the target, share within the target band (target - below .. target + above),
+    // share shallower than the band (under-dug) and share deeper than the band (over-dug).
+    // Optional: only points between minR and maxR (horizontal distance) from 'from' (e.g. the reachable band).
+    // n = number of sample points used.
+    public void FloorStats(float target, float below, float above, float inset,
+                           out float mean, out float rmse, out float inBand, out float under, out float over)
+        => FloorStats(target, below, above, inset, Vector3.zero, 0F, float.MaxValue, out mean, out rmse, out inBand, out under, out over, out _);
+
+    public void FloorStats(float target, float below, float above, float inset, Vector3 from, float minR, float maxR,
+                           out float mean, out float rmse, out float inBand, out float under, out float over, out int n)
+    {
+        mean = rmse = inBand = under = over = 0F;
+        n = 0;
+        if (!hasZone) return;
+        foreach (var p in Grid(inset))
+        {
+            float rr = new Vector2(p.x - from.x, p.z - from.z).magnitude;
+            if (maxR < float.MaxValue && (rr < minR || rr > maxR)) continue;
+            float d = ReferenceGroundHeight(p) - CurrentGroundHeight(p);
+            n++; mean += d; rmse += (d - target) * (d - target);
+            if (d < target - below) under++; else if (d > target + above) over++; else inBand++;
+        }
+        if (n == 0) return;
+        mean /= n; rmse = Mathf.Sqrt(rmse / n); inBand /= n; under /= n; over /= n;
+    }
+
+    // Soil volume (m3) removed inside the zone, and the part of it deeper than depthLimit below the original ground.
+    public void DugVolumes(float depthLimit, out float total, out float beyond)
+    {
+        total = beyond = 0F;
+        if (!hasZone || terrain == null) return;
+        Vector3 tp = terrain.transform.position, size = working.size;
+        int res = working.heightmapResolution;
+        float cx = size.x / (res - 1), cz = size.z / (res - 1);
+        Vector3 eu = axisU * halfU, ev = axisV * halfV;
+        float minX = center.x - Mathf.Abs(eu.x) - Mathf.Abs(ev.x), maxX = center.x + Mathf.Abs(eu.x) + Mathf.Abs(ev.x);
+        float minZ = center.z - Mathf.Abs(eu.z) - Mathf.Abs(ev.z), maxZ = center.z + Mathf.Abs(eu.z) + Mathf.Abs(ev.z);
+        int x0 = Mathf.Clamp(Mathf.FloorToInt((minX - tp.x) / cx), 0, res - 1), x1 = Mathf.Clamp(Mathf.CeilToInt((maxX - tp.x) / cx), 0, res - 1);
+        int z0 = Mathf.Clamp(Mathf.FloorToInt((minZ - tp.z) / cz), 0, res - 1), z1 = Mathf.Clamp(Mathf.CeilToInt((maxZ - tp.z) / cz), 0, res - 1);
+        float[,] h = working.GetHeights(x0, z0, x1 - x0 + 1, z1 - z0 + 1);
+        for (int iz = 0; iz <= z1 - z0; iz++)
+            for (int ix = 0; ix <= x1 - x0; ix++)
+            {
+                Vector3 wp = new Vector3(tp.x + (x0 + ix) * cx, 0F, tp.z + (z0 + iz) * cz);
+                if (!Contains(wp)) continue;
+                float d = ReferenceGroundHeight(wp) - (h[iz, ix] * size.y + tp.y);
+                if (d > 0F) total += d * cx * cz;
+                if (d > depthLimit) beyond += (d - depthLimit) * cx * cz;
+            }
+    }
+
+    // Share of the zone (0..1) that has been dug at least to the given depth (same sample grid as ProgressTo).
+    public float FractionDugTo(float depth, float tolerance = 0.15F, float inset = 0F)
     {
         if (!hasZone) return 0F;
         int total = 0, ok = 0;
-        for (float u = -halfU + 0.25F; u <= halfU - 0.25F; u += 0.5F)
-            for (float v = -halfV + 0.25F; v <= halfV - 0.25F; v += 0.5F)
-            {
-                Vector3 p = center + axisU * u + axisV * v;
-                total++;
-                if (ReferenceGroundHeight(p) - CurrentGroundHeight(p) >= depth - tolerance) ok++;
-            }
+        foreach (var p in Grid(inset))
+        {
+            total++;
+            if (ReferenceGroundHeight(p) - CurrentGroundHeight(p) >= depth - tolerance) ok++;
+        }
         return total == 0 ? 0F : (float)ok / total;
     }
 }

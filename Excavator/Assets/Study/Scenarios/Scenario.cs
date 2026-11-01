@@ -214,6 +214,7 @@ public class ScenarioRunner : MonoBehaviour
         go.AddComponent<ContextViews>().Init(sm.Controller);    // only visible in C2 and C3
         go.AddComponent<PopupViews>().Init(sm.Controller);      // C2/C3, travel mode, when ContextViews.PopupStyleForDriving
         go.AddComponent<AttentionCues>().Init(sm.Controller, current);
+        go.AddComponent<SoilSideBlocker>().Init(sm.Controller); // no swinging sideways while the bucket is buried in soil
         go.AddComponent<BucketBlocker>().Init(sm.Controller);   // bucket/arm cannot pass through the truck   // only visible in C3
         StudyLogger.Log("scenario_ready", trial.scenario.ToString());
     }

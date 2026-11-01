@@ -39,7 +39,8 @@ public class StudyLogger : MonoBehaviour
         CloseSession();
         Directory.CreateDirectory(FolderPath);
         string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", inv);
-        string baseName = $"P{participantId:00}_{stamp}";
+        baseName = $"P{participantId:00}_{stamp}";
+        questionnaire = null;
 
         events = new StreamWriter(Path.Combine(FolderPath, baseName + "_events.csv"));
         events.WriteLine("wall_clock,trial_time_s,participant,trial,condition,scenario,event,detail");
@@ -52,6 +53,7 @@ public class StudyLogger : MonoBehaviour
 
     public void CloseSession()
     {
+        questionnaire?.Flush(); questionnaire?.Close(); questionnaire = null;
         events?.Flush(); events?.Close(); events = null;
         samples?.Flush(); samples?.Close(); samples = null;
     }
@@ -77,6 +79,34 @@ public class StudyLogger : MonoBehaviour
             t.scenario,
             Csv(eventName),
             Csv(detail)));
+    }
+
+    // Questionnaire answers: one row per completed questionnaire in P01_<date>_questionnaire.csv
+    // (columns: wall_clock, participant, trial, condition, scenario, questionnaire, then one column per item).
+    string baseName;
+    StreamWriter questionnaire;
+    public void WriteQuestionnaire(string name, string[] itemNames, int[] values)
+    {
+        if (events == null || string.IsNullOrEmpty(baseName)) return;
+        if (questionnaire == null)
+        {
+            string path = Path.Combine(FolderPath, baseName + "_questionnaire.csv");
+            bool isNew = !File.Exists(path);
+            questionnaire = new StreamWriter(path, true);
+            if (isNew) questionnaire.WriteLine("wall_clock,participant,trial,condition,scenario,questionnaire," + string.Join(",", itemNames) + ",mean");
+        }
+        var sm = StudyManager.Instance;
+        var t = sm != null ? sm.CurrentTrial : default;
+        float mean = 0F;
+        foreach (int v in values) mean += v;
+        mean /= Mathf.Max(1, values.Length);
+        questionnaire.WriteLine(string.Join(",",
+            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", inv),
+            sm != null ? sm.ParticipantId.ToString(inv) : "",
+            t.index.ToString(inv), t.condition, t.scenario, name,
+            string.Join(",", Array.ConvertAll(values, v => v.ToString(inv))),
+            mean.ToString("F2", inv)));
+        questionnaire.Flush();
     }
 
     public void Flush()

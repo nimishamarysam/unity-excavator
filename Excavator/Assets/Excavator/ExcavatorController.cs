@@ -129,8 +129,8 @@ public class ExcavatorController : MonoBehaviour
     public FlightStickChoice flightStick = FlightStickChoice.Auto;
     [Tooltip("Auto: two sticks connected = gamepad-style two-stick layout, one stick = single-stick layout.")]
     public StickLayout stickLayout = StickLayout.Auto;
-    [Tooltip("Show live stick values at the bottom of the screen (always shown while calibrating).")]
-    public bool showFlightStickDebug = true;
+    [Tooltip("Show live stick values / the 'No joystick connected' note above the status bar (always shown while calibrating).")]
+    public bool showFlightStickDebug = false;   // off: no input info box over the driver view during the study
     [Tooltip("Only with 'Block Gamepad Keyboard': keep the experimenter keyboard keys (Enter, P, End, N, C calibrate, S swap). They never move the machine.")]
     public bool experimenterKeyboard = true;
     [Tooltip("Joystick button numbers (1 = trigger), as in Windows 'Set up USB game controllers'. Check them with the live overlay ('pressed: ...').")]
@@ -201,7 +201,7 @@ public class ExcavatorController : MonoBehaviour
     {
         if (!(input is GamepadAndStickInput gi)) return;
         if (!showFlightStickDebug && !gi.IsCalibrating) return;
-        GUI.depth = -1000; // bottom-centre, on top of the study panels
+        GUI.depth = -1000; // bottom-centre, just ABOVE the status bar (never over it), on top of the study panels
         if (stickStyle == null)
         {
             stickStyle = new GUIStyle(GUI.skin.label) { fontSize = 18, wordWrap = true };
@@ -211,7 +211,8 @@ public class ExcavatorController : MonoBehaviour
         }
         stickStyle.normal.textColor = gi.IsCalibrating ? Color.yellow : Color.white;
         float w = Mathf.Min(1000F, Screen.width - 20F), h = 170F;
-        GUI.Label(new Rect((Screen.width - w) / 2F, Screen.height - h - 10F, w, h), gi.DebugText(), stickStyle);
+        float barPx = StudyLayout.BarHeight * Screen.height;
+        GUI.Label(new Rect((Screen.width - w) / 2F, Screen.height - barPx - h - 10F, w, h), gi.DebugText(), stickStyle);
     }
 
     // Start is called before the first frame update

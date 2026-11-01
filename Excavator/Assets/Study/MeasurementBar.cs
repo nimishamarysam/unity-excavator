@@ -111,7 +111,7 @@ public class MeasurementBar : MonoBehaviour
         if (ctl == null || ctl.Machine == null) return;
         var m = ctl.Machine;
 
-        mode.text   = ctl.IsTravelMode ? "TRAVEL" : "DIG";
+        mode.text   = ctl.IsTravelMode ? "DRIVE" : "DIG";
         swing.text  = Deg(m.swingAngle);
         boom.text   = Deg(m.boomAngle);
         arm.text    = Deg(m.armAngle);

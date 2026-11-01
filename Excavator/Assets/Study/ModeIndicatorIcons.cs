@@ -9,6 +9,10 @@ using UnityEngine.UI;
 //     DIG    = excavator bucket with teeth on the end of the arm (digging)
 // Active mode: green square, dark icon. Inactive: dark square, grey icon. The icons are drawn in code
 // (no image assets). ExcavatorController calls Setup once and Apply when the mode changes.
+//
+// 2026-11-01: the two squares in the scene (top right) are HIDDEN. The mode is shown only as text
+// (DRIVE / DIG) in the MODE cell of the status bar (MeasurementBar), no icons.
+// Set ShowSceneIcons = true to bring the top-right squares back.
 // ---------------------------------------------------------------------------
 
 public static class ModeIndicatorIcons
@@ -18,8 +22,28 @@ public static class ModeIndicatorIcons
     static readonly Color ActiveBg = new Color(0.15F, 0.85F, 0.25F), InactiveBg = new Color(0.12F, 0.12F, 0.13F);
     static readonly Color ActiveIcon = new Color(0.05F, 0.1F, 0.05F), InactiveIcon = new Color(0.6F, 0.6F, 0.62F);
 
+    // false = the top-right squares in the scene are hidden (mode shown in the status bar instead).
+    public static bool ShowSceneIcons = false;
+
+    // Icons for other UI (status bar MODE cell).
+    public static Sprite TravelIcon => TravelSprite;
+    public static Sprite DigIcon => DigSprite;
+
+    // Colours one square (background) and its icon for the active / inactive state.
+    public static void PaintSquare(Image bg, Image icon, bool active)
+    {
+        if (bg != null) bg.color = active ? ActiveBg : InactiveBg;
+        if (icon != null) icon.color = active ? ActiveIcon : InactiveIcon;
+    }
+
     public static void Setup(Image travel, Image operation)
     {
+        if (!ShowSceneIcons)
+        {
+            if (travel != null) travel.gameObject.SetActive(false);
+            if (operation != null) operation.gameObject.SetActive(false);
+            return;
+        }
         AddIcon(travel, TravelSprite);
         AddIcon(operation, DigSprite);
     }

@@ -158,7 +158,8 @@ public class DiggingCues : MonoBehaviour
         if (wantTraj != trajShown) { trajShown = wantTraj; AttentionCues.LogCue(wantTraj, "bucket_trajectory", wantTraj ? EntryText() : ""); }
         if (wantTraj) DrawTrajectory(); else HideTrajectory();
 
-        bool overDump = OverDumpArea();
+        // Trench task: no height arrow over the spoil square (only over the truck in dig and dump).
+        bool overDump = OverDumpArea() && !(root.Scenario is DiggingScenario);
         if (op && root.Profile.bucketSideHeightArrow && ContextViews.BucketSideCamera != null && (BucketInDigArea() || overDump))
             DrawHeightArrow(overDump && !BucketInDigArea());
         else HideHeightArrow();
@@ -445,7 +446,7 @@ public class DiggingCues : MonoBehaviour
     // Dump marker: ring + cross where the soil would land (on the truck bed floor, found by a ray straight
     // down from the teeth), coloured by how far inside the dump area it is:
     //   green = well inside, yellow -> orange = close to the edge / wall, red (blinking) = outside (spill).
-    // Shown when the loaded bucket is within 3 m of the dump area. Returns false when not shown.
+    // Shown when the loaded bucket is within 1 m (trench task) / 3 m (truck) of the dump area. Returns false when not shown.
     bool DumpMarker(Excavator m, Vector3 tip, Vector3 c, Vector3 fw, float len, float wid)
     {
         fw = CueKit.Flat(fw).normalized;
@@ -453,7 +454,9 @@ public class DiggingCues : MonoBehaviour
         float du = Mathf.Abs(Vector3.Dot(rel, fw)) / (len / 2F), dv = Mathf.Abs(Vector3.Dot(rel, sd)) / (wid / 2F);
         float u = Mathf.Max(du, dv);                                   // 0 = centre, 1 = edge
         float outside = Mathf.Max(0F, Mathf.Max(Mathf.Abs(Vector3.Dot(rel, fw)) - len / 2F, Mathf.Abs(Vector3.Dot(rel, sd)) - wid / 2F));
-        if (outside > 3F) return false;
+        // Shown only when the bucket is close to the dump area: within 1 m of the spoil square's edge in the trench task
+        // (earlier 3 m, it appeared too early), within 3 m of the truck bed in dig and dump.
+        if (outside > (root.Scenario is DiggingScenario ? 1F : 3F)) return false;
 
         Color col; string state;
         if (u <= 0.5F) { col = CueKit.Good; state = "dump_centre"; }

@@ -10,7 +10,8 @@ using UnityEngine.SceneManagement;
 //   Setup screen  -> enter participant ID (experimenter)
 //   Briefing      -> participant reads the condition + task, presses A to start
 //   Running       -> the trial; the scene is reloaded so the machine starts fresh
-//   Questionnaire -> participant fills in SIM-TLX + SART, experimenter presses Enter
+//   Questionnaire -> participant fills in the questionnaires outside the simulator (SIM-TLX and SART are
+//                    collected separately); the experimenter presses Enter / A to continue
 //   ...repeat for all trials...
 //   Finished
 //
@@ -68,7 +69,9 @@ public class StudyManager : MonoBehaviour
         {
             var g = PracticeGuide.Current;
             if (g == null) return practiceDurationSeconds;          // walkthrough switched off (or not built yet)
-            return g.Done ? g.DoneAt + practiceDurationSeconds : float.MaxValue;
+            // With the walkthrough the guide ends the practice itself: when the free-practice time is up it
+            // shows the "Practice complete" menu (start the tasks / repeat a phase) instead of ending the trial.
+            return float.MaxValue;
         }
     }
 
@@ -157,6 +160,9 @@ public class StudyManager : MonoBehaviour
         TrialEnded?.Invoke(CurrentTrial, reason);
         CurrentState = State.Questionnaire;
         Freeze(true);
+        // SIM-TLX on the instruction screen after every measured task (not after the practice).
+        tlxDone = !SimTlxForm.Enabled || CurrentTrial.scenario == StudyScenario.Practice;
+        if (!tlxDone) tlx.Begin();
     }
 
     void Update()
@@ -212,6 +218,18 @@ public class StudyManager : MonoBehaviour
                 break;
 
             case State.Questionnaire:
+                if (!tlxDone)
+                {
+                    // Participant fills in the SIM-TLX; Enter (experimenter keyboard) skips it.
+                    if (enter) { tlxDone = true; StudyLogger.Log("sim_tlx_skipped", "by_experimenter"); }
+                    else if (tlx.Tick())
+                    {
+                        tlxDone = true;
+                        StudyLogger.Log("sim_tlx", tlx.Detail());
+                        StudyLogger.Instance.WriteQuestionnaire("SIM-TLX", SimTlxForm.ItemKeys, tlx.Values);
+                    }
+                    break;   // the confirm press that submitted the form must not also start the next task
+                }
                 if (enter || padA) NextTrial();
                 break;
         }
@@ -232,6 +250,8 @@ public class StudyManager : MonoBehaviour
     // ---------- Screens (experimenter/participant panels, drawn with Unity's simple IMGUI) ----------
 
     MiniMap briefingMap;
+    readonly SimTlxForm tlx = new SimTlxForm();
+    bool tlxDone = true;
 
     void OnGUI()
     {
@@ -287,6 +307,7 @@ public class StudyManager : MonoBehaviour
         var inner = new Rect(r.x + 30F * k, r.y + 25F * k, r.width - 60F * k - (siteMap != null ? mapW + 30F * k : 0F), r.height - 50F * k);
 
         if (CurrentState == State.Setup) DrawSetup(inner);
+        else if (CurrentState == State.Questionnaire && !tlxDone) tlx.Draw(inner, k);
         else DrawItems(inner, ScreenItems(), k);
 
         if (siteMap != null)
@@ -363,13 +384,14 @@ public class StudyManager : MonoBehaviour
                     list.Add(new ScreenItem("Practice complete - well done!", true));
                     list.Add(new ScreenItem("Great job! You have learned how to drive the excavator and use the boom, arm, bucket and swing controls.", space: 10));
                     list.Add(new ScreenItem("Next, you will start the actual tasks. Before each task you will see a short description of what to do. " +
-                                            "Take your time to read it, and work carefully - try to avoid incidents.", space: 10));
+                                            "Take your time to read it, and work carefully. ", space: 10));
                     list.Add(new ScreenItem(StickControls.PressConfirm + " when you are ready to continue.", space: 16, bottom: true));
                 }
                 else
                 {
                     list.Add(new ScreenItem("Task complete", true));
-                    list.Add(new ScreenItem("Please fill in the SIM-TLX and SART questionnaires for this task.", space: 10));
+                    list.Add(new ScreenItem(SimTlxForm.Enabled ? "Thank you for your ratings. Please now fill in the SART questionnaire for this task."
+                                                               : "Please fill in the questionnaires for this task.", space: 10));
                     list.Add(new ScreenItem("Experimenter: " + StickControls.PressConfirm.ToLower() + " (or Enter) to continue.", space: 16, bottom: true));
                 }
                 break;
