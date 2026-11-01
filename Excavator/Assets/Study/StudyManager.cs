@@ -155,8 +155,12 @@ public class StudyManager : MonoBehaviour
     public void EndTrial(string reason)
     {
         if (CurrentState != State.Running && CurrentState != State.Paused) return;
+        endReason = reason;
+        endTime = TrialTime;
+        endIncidents = IncidentFeedback.Count;
+        endResult = ScenarioRunner.Current != null ? ScenarioRunner.Current.ResultText : "";
         StudyLogger.Log("trial_end", reason);
-        StudyLogger.Instance.Flush();
+        StudyLogger.Instance?.Flush();   // null after a script reload during Play mode: do not get stuck here every frame
         TrialEnded?.Invoke(CurrentTrial, reason);
         CurrentState = State.Questionnaire;
         Freeze(true);
@@ -249,7 +253,12 @@ public class StudyManager : MonoBehaviour
 
     // ---------- Screens (experimenter/participant panels, drawn with Unity's simple IMGUI) ----------
 
-    MiniMap briefingMap;
+    MiniMap briefingMap, briefingMapDigging;
+
+    // How the last trial ended, captured in EndTrial for the "Task complete" screen.
+    string endReason = "", endResult = "";
+    int endIncidents;
+    float endTime;
     readonly SimTlxForm tlx = new SimTlxForm();
     bool tlxDone = true;
 
@@ -296,6 +305,8 @@ public class StudyManager : MonoBehaviour
         MiniMap siteMap = null;
         if (CurrentState == State.Briefing && CurrentTrial.scenario == StudyScenario.Hard_DigAndDump)
             siteMap = briefingMap ??= DigDumpScenario.SiteMap();
+        if (CurrentState == State.Briefing && CurrentTrial.scenario == StudyScenario.Moderate_Digging)
+            siteMap = briefingMapDigging ??= DiggingScenario.SiteMap();
         float m = 20F * k;
         float w = Mathf.Min((siteMap != null ? 1400F : 1000F) * k, sw - 2F * m), h = sh - 2F * m;
         float mapW = siteMap != null ? Mathf.Min(480F * k, w * 0.4F) : 0F;
@@ -315,6 +326,14 @@ public class StudyManager : MonoBehaviour
             SetFonts(k);
             var mr = new Rect(r.xMax - 30F * k - mapW, r.y + 55F * k, mapW, r.height - 80F * k);
             GUI.Label(new Rect(mr.x, r.y + 22F * k, mapW, 30F * k), "Site map (seen from above)", normal);
+            // Legend under the map: what each colour / symbol means.
+            int lf = Mathf.Max(11, Mathf.RoundToInt(14F * k));
+            float lh = Mathf.Min(siteMap.LegendHeight(mapW, lf), mr.height * 0.55F);
+            if (lh > 0F)
+            {
+                siteMap.DrawLegend(new Rect(mr.x, mr.yMax - lh, mapW, lh), lf);
+                mr.height -= lh + 8F * k;
+            }
             siteMap.Draw(mr);
         }
     }
@@ -390,9 +409,18 @@ public class StudyManager : MonoBehaviour
                 else
                 {
                     list.Add(new ScreenItem("Task complete", true));
+                    // How the task ended + the result.
+                    string how = endReason == "completed" ? "You completed the task."
+                               : endReason == "time_limit" ? "The time ran out before the task was finished."
+                               : endReason == "ended_by_experimenter" ? "The task was stopped by the experimenter."
+                               : "The task ended (" + endReason + ").";
+                    list.Add(new ScreenItem(how, space: 10));
+                    string res = $"Time: {Mathf.FloorToInt(endTime / 60F)}:{Mathf.FloorToInt(endTime % 60F):00}      Incidents: {endIncidents}";
+                    if (!string.IsNullOrEmpty(endResult)) res = endResult + "\n" + res;
+                    list.Add(new ScreenItem(res, space: 6));
                     list.Add(new ScreenItem(SimTlxForm.Enabled ? "Thank you for your ratings. Please now fill in the SART questionnaire for this task."
                                                                : "Please fill in the questionnaires for this task.", space: 10));
-                    list.Add(new ScreenItem("Experimenter: " + StickControls.PressConfirm.ToLower() + " (or Enter) to continue.", space: 16, bottom: true));
+                    list.Add(new ScreenItem("Experimenter: " + StickControls.PressConfirm + " (or Enter) to continue.", space: 16, bottom: true));
                 }
                 break;
 

@@ -36,7 +36,11 @@ public class BucketLoad : MonoBehaviour
     public float dumpAngle = 140F;         // opened to this angle or more = soil falls out
     public float dumpMinHeight = 0.5F;     // metres above the ground needed to dump
     public float cutTolerance = 0.15F;     // teeth within this distance above the dug surface still count as in the soil
-    public float zoneMargin = 0.5F;        // metres of tolerance around the marked dig zone
+    public float zoneMargin = 0.5F;        // metres of tolerance around the marked dig zone (for scooping soil)
+    // DIGGING OUTSIDE THE AREA (incident "cut_outside_zone" / dig_outside_area). 2026-11-01: stricter - was zoneMargin
+    // (0.5 m) beyond the marked edge and 0.3 m below the ground; now the teeth only 0.2 m past the edge and 0.15 m deep.
+    public float outsideMargin = 0.2F;     // teeth this far beyond the marked edge count as outside
+    public float outsideDepth = 0.15F;     // ... when at least this deep below the original ground
 
     // Called with the world position where the soil was released. LastDumpAmount says how much (0..1).
     public event Action<Vector3> Dumped;
@@ -126,10 +130,19 @@ public class BucketLoad : MonoBehaviour
 
         // Digging outside the zone: log once per pass (a pass ends when the bucket is out of the ground).
         if (depthBelowOriginal < 0F) outsideLogged = false;
-        if (!inZone && !outsideLogged && depthBelowOriginal > 0.3F)
+        bool outside = digger != null && !digger.Contains(tip, outsideMargin) && depthBelowOriginal > outsideDepth;
+        string part = "teeth";
+        Vector3 at = tip;
+        // 2026-11-01: the WHOLE bucket, not only the teeth - any corner of the bucket's box (mesh bounds, shrunk to
+        // BodyBoxShrink so the box hugs the bucket) that is in the ground outside the marked area also counts.
+        if (!outside && digger != null && !outsideLogged && BucketCornerOutside(digger, out Vector3 corner))
+        {
+            outside = true; part = "bucket_body"; at = corner;
+        }
+        if (outside && !outsideLogged)
         {
             outsideLogged = true;
-            StudyLogger.Log("cut_outside_zone", $"x={tip.x:F1};z={tip.z:F1}");
+            StudyLogger.Log("cut_outside_zone", $"x={at.x:F1};z={at.z:F1};part={part}");
         }
 
         // Show the soil in the bucket, sized by how full it is.
@@ -300,6 +313,26 @@ public class BucketLoad : MonoBehaviour
         Dumped?.Invoke(at);
     }
 
+    const float BodyBoxShrink = 0.85F;   // bucket box (mesh bounds) scaled by this for the outside-digging check
+
+    bool BucketCornerOutside(TerrainDigger digger, out Vector3 corner)
+    {
+        corner = Vector3.zero;
+        var mc = machine.BucketMeshCollider;
+        if (mc == null || mc.sharedMesh == null) return false;
+        Bounds b = mc.sharedMesh.bounds;
+        Transform t = mc.transform;
+        Vector3 e = b.extents * BodyBoxShrink;
+        for (int i = 0; i < 8; i++)
+        {
+            Vector3 local = b.center + new Vector3((i & 1) == 0 ? -e.x : e.x, (i & 2) == 0 ? -e.y : e.y, (i & 4) == 0 ? -e.z : e.z);
+            Vector3 w = t.TransformPoint(local);
+            float depth = TerrainDigger.ReferenceGroundHeight(w) - w.y;
+            if (depth > outsideDepth && !digger.Contains(w, outsideMargin)) { corner = w; return true; }
+        }
+        return false;
+    }
+
     static RaycastHit[] SortedHits(Vector3 from)
     {
         var hits = Physics.RaycastAll(from, Vector3.down, 30F);
@@ -355,10 +388,22 @@ public class SoilHeap : MonoBehaviour
     public static void AddAt(Vector3 point, float amount, Transform parent)
     {
         heaps.RemoveAll(h => h == null);
+        // 2026-11-01: soil joins an existing heap only when it lands ON it (within ~70 % of its radius), and the heap
+        // then shifts towards where the new soil landed (volume-weighted centre). Before, everything within
+        // 0.6 m + 0.6 x radius was pulled into the old heap at its old place, which looked as if the heap sucked
+        // the new soil in.
         foreach (var h in heaps)
         {
-            Vector3 d = h.transform.position - point; d.y *= 0.5F;
-            if (d.magnitude < 0.6F + h.Radius * 0.6F) { h.Grow(amount); return; }
+            Vector3 d = h.transform.position - point; d.y = 0F;
+            if (d.magnitude < 0.25F + h.Radius * 0.7F)
+            {
+                float add = Mathf.Max(amount, 0.1F);
+                Vector3 c = (h.transform.position * h.Volume + point * add) / (h.Volume + add);
+                c.y = Mathf.Min(h.transform.position.y, point.y);
+                h.transform.position = c;
+                h.Grow(amount);
+                return;
+            }
         }
         var go = new GameObject("SoilHeap");
         go.transform.SetParent(parent, true);

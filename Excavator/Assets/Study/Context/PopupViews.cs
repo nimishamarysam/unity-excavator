@@ -25,9 +25,12 @@ using UnityEngine.UI;
 
 public class PopupViews : MonoBehaviour
 {
-    public float openDistanceObstacle = 4F;   // metres from the machine
+    public float openDistanceObstacle = 2F;   // metres from the machine (2026-11-01: was 4 m)
     public float openDistanceWorker = 8F;
-    public float closeExtra = 1.5F;           // must move this much further away to close (no flicker)
+    public float closeExtra = 1.5F;           // workers: must move this much further away to close (no flicker)
+    public float closeExtraObstacle = 0F;     // obstacles / truck: the window closes as soon as nothing is within 2 m
+    public float closeDelayObstacle = 0.3F;   // ... after this short time (only against flicker at the 2 m border;
+                                              // no minimum open time for obstacles)
     public float closeDelay = 2F;             // seconds the object must stay far before the window closes
     public float minOpenSeconds = 4F;         // a window stays at least this long once opened
     public int maxPopups = 2;
@@ -35,6 +38,13 @@ public class PopupViews : MonoBehaviour
     public float followSpeed = 8F;
 
     public float switchMargin = 0.5F;         // docked: switch to another object when it is this much closer
+    // 2026-11-01: PEOPLE FIRST. For choosing (and switching) the one docked camera, a worker counts as this much
+    // closer than it is. A worker 2 m away is shown before a barrel 1.6 m away (before, the barrel won and the worker
+    // was only shown once it had walked away again). An obstacle still wins if it is clearly closer (< worker - 3 m).
+    public float workerPriority = 3F;
+    public float minSwitchSeconds = 0.5F;     // docked: ... but not more often than this (was minOpenSeconds = 4 s, so
+                                              // an object that had moved away could stay on screen while a closer one
+                                              // was ignored - e.g. the fence at 3.6 m while passing a barrel)
 
     // true = obstacle cameras are always placed in the right-hand panel, never inside the driver view.
     // One window in the bottom half of the panel, under the bird's-eye view (all scenarios). It shows the
@@ -85,27 +95,33 @@ public class PopupViews : MonoBehaviour
         var near = new List<Hazard>();
         var input = ctl.LastInput;
         bool moving = ctl.Machine.SpeedKmh > 0.3F || input.trackLeft != 0F || input.trackRight != 0F;
-        if (!onlyWhileMoving || moving)
-            foreach (var h in Hazard.All)
-            {
-                if (!h.active || !h.gameObject.activeInHierarchy || !IsPopupKind(h) || h.CurrentDistance > OpenDistance(h)) continue;
-                if (ignoreTruck && h.kind == HazardKind.Truck && h.CurrentLevel != Hazard.Level.Contact) continue;
-                near.Add(h);
-            }
-        near.Sort((a, b) => a.CurrentDistance.CompareTo(b.CurrentDistance));
+        foreach (var h in Hazard.All)
+        {
+            if (!h.active || !h.gameObject.activeInHierarchy || !IsPopupKind(h) || h.CurrentDistance > OpenDistance(h)) continue;
+            if (ignoreTruck && h.kind == HazardKind.Truck && h.CurrentLevel != Hazard.Level.Contact) continue;
+            near.Add(h);
+        }
+        near.Sort((a, b) => Rank(a).CompareTo(Rank(b)));
 
-        // Docked: keep showing the closest object; switch when another one is clearly closer.
+        // Docked: always show the CLOSEST object. Switch as soon as another one is clearly closer (switchMargin),
+        // at most every minSwitchSeconds - also while standing still, so the window never keeps showing an object
+        // that is farther away than another one nearby.
+        bool switched = false;   // switching to a closer object: the replacement may open while standing still
         if (docked && popups.Count == 1 && near.Count > 0 && near[0] != popups[0].hazard &&
-            Time.unscaledTime - popups[0].openedAt > minOpenSeconds &&
-            (popups[0].hazard == null || near[0].CurrentDistance < popups[0].hazard.CurrentDistance - switchMargin))
+            Time.unscaledTime - popups[0].openedAt > minSwitchSeconds &&
+            (popups[0].hazard == null || Rank(near[0]) < Rank(popups[0].hazard) - switchMargin
+             || popups[0].hazard.CurrentDistance > OpenDistance(popups[0].hazard)))   // shown one is out of range: take the one in range
         {
             Close(popups[0]);
             popups.Clear();
+            switched = true;
         }
 
-        // Open pop-ups for new close hazards.
+        // Open pop-ups for new close hazards ("only while moving" decides when a window may OPEN when none is shown;
+        // switching to a closer object above works also while standing still).
         foreach (var h in near)
         {
+            if (onlyWhileMoving && !moving && !switched) break;
             if (popups.Count >= maxPopups) break;
             if (popups.Exists(p => p.hazard == h)) continue;
             popups.Add(Open(h));
@@ -118,17 +134,22 @@ public class PopupViews : MonoBehaviour
             bool gone = p.hazard == null || !p.hazard.active || !p.hazard.gameObject.activeInHierarchy;
             // Closing depends only on distance (and the truck rule). "Only while moving" decides when a
             // window may OPEN, not when it closes, so a window does not vanish when the machine pauses.
-            bool far = gone || p.hazard.CurrentDistance > OpenDistance(p.hazard) + closeExtra
+            float extra = p.hazard != null && p.hazard.kind == HazardKind.Worker ? closeExtra : closeExtraObstacle;
+            bool far = gone || p.hazard.CurrentDistance > OpenDistance(p.hazard) + extra
                        || (ignoreTruck && p.hazard.kind == HazardKind.Truck && p.hazard.CurrentLevel != Hazard.Level.Contact);
             if (far) { if (p.farSince < 0) p.farSince = Time.unscaledTime; }
             else p.farSince = -1F;
-            bool minTimeOver = Time.unscaledTime - p.openedAt > minOpenSeconds;
-            if (gone || (far && minTimeOver && Time.unscaledTime - p.farSince > closeDelay)) { Close(p); popups.RemoveAt(i); continue; }
+            bool worker = p.hazard != null && p.hazard.kind == HazardKind.Worker;
+            bool minTimeOver = !worker || Time.unscaledTime - p.openedAt > minOpenSeconds;   // obstacles: no minimum
+            float delay = worker ? closeDelay : closeDelayObstacle;
+            if (gone || (far && minTimeOver && Time.unscaledTime - p.farSince > delay)) { Close(p); popups.RemoveAt(i); continue; }
             UpdatePopup(p, i);
         }
     }
 
     static bool IsPopupKind(Hazard h) => h.kind == HazardKind.Worker || h.kind == HazardKind.Obstacle || h.kind == HazardKind.Truck;
+    // Ranking distance for the docked camera: workers count as workerPriority closer (see above).
+    float Rank(Hazard h) => h.kind == HazardKind.Worker ? h.CurrentDistance - workerPriority : h.CurrentDistance;
     float OpenDistance(Hazard h) => h.kind == HazardKind.Worker ? openDistanceWorker : openDistanceObstacle;
 
     Popup Open(Hazard h)

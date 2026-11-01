@@ -135,12 +135,25 @@ public static class StudyDesign
                        "3. Stop when the middle of the machine is on the yellow stop line.\n\n" +
                        "Do not touch the gates, obstacles or people.";
             case StudyScenario.Moderate_Digging:
-                return "Drive into the yellow box, then dig the marked trench to the target depth. Dump soil only on the small white square. " +
-                       "Avoid the buried cable, the crossing pipe below the trench, and the worker.";
+            {
+                DiggingScenario.BriefingSides(out string cableSide, out string dumpSide);
+                string cableWhere = cableSide != null ? $"on the {cableSide.ToUpper()} side of the trench" : "along one side of the trench";
+                string dumpWhere = dumpSide != null ? $"Swing the cab to the {dumpSide.ToUpper()}" : "Swing the cab";
+                return $"Goal: Dig the brown trench (DIG) to {DiggingScenario.TargetDepth:0.0} m deep and dump the soil on the white DUMP pit. " +
+                       "The site map on the right shows where everything is.\n\n" +
+                       $"1. Drive forward into the yellow WORK BOX: {StickControls.DriveForward}. Then switch to DIG mode.\n" +
+                       $"2. Dig only inside the brown trench. BUCKET HEIGHT in the status bar shows the depth: aim for -{DiggingScenario.TargetDepth:0.00} m, not deeper.\n" +
+                       $"3. {dumpWhere} to the small white DUMP square and empty the bucket inside it. Soil anywhere else counts as a spill.\n\n" +
+                       "Markers on the ground:\n" +
+                       $"- ORANGE posts: a buried electric CABLE runs {cableWhere}, between the posts. Do not dig outside the trench there.\n" +
+                       "- YELLOW posts (two, one each side of the trench): a water PIPE crosses UNDER the trench between them, " +
+                       $"just below the target depth. Do not dig deeper than {DiggingScenario.TargetDepth:0.0} m near them.\n\n" +
+                       "A worker may walk up to the trench - never swing the bucket over a person.";
+            }
             default:
                 return "Goal: load the truck 4 times within 6 minutes. The truck is out of reach from the pit, so you drive between them.\n\n" +
                        "For each load:\n" +
-                       "1. Dig: from the DIG box, fill the bucket from the brown pit in front of you.\n" +
+                       $"1. Dig: from the DIG box, fill the bucket from the brown pit in front of you - at least {DigDumpScenario.MinLoadFill * 100F:0}% (BUCKET LOAD in the status bar). A load with less does not count.\n" +
                        $"2. Reverse to the DUMP box: {StickControls.DriveBack}. The machine moves backwards while the cab keeps " +
                        "facing the pit - do NOT swing the cab around. Follow the lane: it bends right, then left, around the barriers.\n" +
                        "3. Dump: in the DUMP box, swing the cab LEFT to the truck and empty the bucket into the truck bed.\n" +

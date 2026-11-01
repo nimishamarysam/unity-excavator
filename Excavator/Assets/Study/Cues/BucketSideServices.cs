@@ -18,6 +18,8 @@ using UnityEngine;
 //   - C2 shows only the service name (no bar, no number, no tether): proximity guidance is C3 only.
 //   - C3 only: the colour turns red (pulsing) at warning / contact distance. C2: the same without warnings.
 //   - Each service is drawn once, even if it is registered twice.
+//   - 2026-11-01: the dashed line is drawn only while the bucket teeth are within lineRange (horizontally) of the
+//     service - i.e. while working at the pit/trench - not when the machine is far away (e.g. dumping at the truck).
 // In the underground cut-away (UndergroundSideView.Active) the PIPE is drawn by that view instead.
 // ---------------------------------------------------------------------------
 
@@ -26,6 +28,14 @@ public class BucketSideServices : MonoBehaviour
     public float dash = 0.3F, gap = 0.2F;
     public float cableWidth = 0.07F, pipeWidth = 0.12F;
     public float barRange = 2F;          // the proximity bar starts to fill (and the tether appears) inside this distance (m)
+    // 2026-11-01: the CABLE runs along the trench, BESIDE it - parallel to this view, so its dashed line was drawn
+    // across the trench and looked as if the cable lay in the dig path. Off: only the PIPE (which really crosses
+    // under the trench) gets a dashed line here; the cable keeps its proximity widget (and C3 tether) when close.
+    public static bool CableLineInSideView = false;
+    public float lineRange = 4F;
+    // ... AND only while the teeth are over the dig area (trench / pit) or within this margin of it (m). Swung away to
+    // dump, the line ended up drawn beside the work box and looked like a service there (2026-11-01).
+    public float digAreaMargin = 1F;         // dashed line shown only while the teeth are this close (horizontally) to the service (m)
 
     static readonly string[] MarkerNames = { "CableMarker", "CableLine", "PipeMarker", "PipeLine" };
 
@@ -141,6 +151,10 @@ public class BucketSideServices : MonoBehaviour
             bool isCable = h.kind == HazardKind.BuriedCable, isPipe = h.kind == HazardKind.BuriedPipe;
             if (!isCable && !isPipe) continue;
             bool linesHere = !(isPipe && UndergroundSideView.Active);   // in the cut-away the pipe ring is drawn by that view
+            Vector3 tipNow = root.M.BucketTipPosition;
+            if (FlatDistance(tipNow, seg.a, seg.b) > lineRange) linesHere = false;   // far away: no dashed line
+            if (TerrainDigger.Instance != null && !TerrainDigger.Instance.Contains(tipNow, digAreaMargin)) linesHere = false;   // not at the dig area
+            if (isCable && !CableLineInSideView) linesHere = false;                                   // misleading from the side
             string key = $"{h.kind}:{seg.a.x:F1},{seg.a.z:F1},{seg.b.x:F1},{seg.b.z:F1}";
             if (!seenServices.Add(key)) continue;                  // registered twice: draw once
 
@@ -183,6 +197,14 @@ public class BucketSideServices : MonoBehaviour
         for (int i = nd; i < dashes.Count; i++) CueKit.Hide(dashes[i]);
         for (int i = nl; i < labels.Count; i++) labels[i].Hide();
         for (int i = nt; i < tethers.Count; i++) CueKit.Hide(tethers[i]);
+    }
+
+    // Horizontal (x/z) distance from p to the segment a-b.
+    static float FlatDistance(Vector3 p, Vector3 a, Vector3 b)
+    {
+        Vector2 P = new Vector2(p.x, p.z), A = new Vector2(a.x, a.z), AB = new Vector2(b.x, b.z) - A;
+        float t = AB.sqrMagnitude < 1e-6F ? 0F : Mathf.Clamp01(Vector2.Dot(P - A, AB) / AB.sqrMagnitude);
+        return (P - (A + AB * t)).magnitude;
     }
 
     LineRenderer Pool(int i, float width)

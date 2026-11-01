@@ -165,7 +165,8 @@ public static class WorldBuilder
 
     // A dump truck seen from the side: cab, chassis and an open box bed. Returns the bed's inside centre (at floor level).
     // Truck bed inside size (m). Was 5.0 x 2.5.
-    public const float TruckBedLength = 6F, TruckBedWidth = 3.2F;
+    // 2026-11-01: 4.5 x 2.6 m (was 6.0 x 3.2 m) - a smaller bed so the dump has to be aimed (Dig and dump).
+    public const float TruckBedLength = 4.5F, TruckBedWidth = 2.6F;
 
     public static Vector3 Truck(Transform parent, string name, Vector3 center, Vector3 forward, out Bounds bedArea)
     {
@@ -207,6 +208,11 @@ public class WorkerWalker : MonoBehaviour
 {
     public float speed = 1.3F;
     public float stride = 28F;          // leg swing in degrees while walking
+    // 2026-11-01: a worker never walks INTO the machine. Closer than KeepAway (m, measured like the hazard: to the
+    // nearest part of the machine) he walks AROUND it - the part of his step towards the machine is removed, and he
+    // is pushed back out if the machine itself comes closer. Before, his route went straight through the excavator
+    // (and that counted as the participant hitting him).
+    public static float KeepAway = 0.8F;
     readonly Queue<(Vector3 pos, float wait)> route = new Queue<(Vector3, float)>();
     float waitUntil, phase, swing;
     Hazard hazard;
@@ -236,6 +242,18 @@ public class WorkerWalker : MonoBehaviour
             Vector3 pos = transform.position;
             Vector3 flat = new Vector3(target.x - pos.x, 0, target.z - pos.z);
             float step = speed * Time.deltaTime;
+            if (hazard != null && hazard.active && hazard.CurrentDistance < KeepAway && flat.magnitude > step)
+            {
+                // Next to the machine: slide along it instead of walking through it.
+                Vector3 n = pos - hazard.MachinePoint; n.y = 0F;
+                n = n.sqrMagnitude > 1e-4F ? n.normalized : -transform.forward;
+                Vector3 dir = flat.normalized;
+                float into = Vector3.Dot(dir, n);
+                if (into < 0F) dir -= n * into;                                          // drop the part towards the machine
+                if (hazard.CurrentDistance < KeepAway * 0.6F) dir += n * 0.8F;         // too close: step back out
+                if (dir.sqrMagnitude < 1e-4F) dir = Vector3.Cross(Vector3.up, n);       // straight at it: go sideways
+                flat = dir.normalized * Mathf.Max(flat.magnitude, step * 2F);
+            }
             if (flat.magnitude <= step)
             {
                 pos = new Vector3(target.x, pos.y, target.z);

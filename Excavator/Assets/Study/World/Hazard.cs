@@ -19,7 +19,10 @@ public enum HazardKind { Worker, Obstacle, BuriedCable, PowerLine, TrenchEdge, T
 // Which part of the machine counts when measuring distance.
 // Attachment = boom, arm and bucket measured as thick line segments along their real centre lines
 // (not the colliders' convex hulls, which are much larger than the visible parts). Used for the power line.
-public enum HazardMeasure { WholeMachine, BucketTeethOnly, TracksOnly, Attachment }
+// Bucket = the WHOLE bucket: the teeth AND the bucket's box (its mesh bounds, oriented with the bucket), so a
+// service that ends up inside or against the bucket body counts, not only one touched by the teeth (2026-11-01,
+// buried pipes: the pipe could sit inside the bucket without a strike).
+public enum HazardMeasure { WholeMachine, BucketTeethOnly, TracksOnly, Attachment, Bucket }
 
 public abstract class Hazard : MonoBehaviour
 {
@@ -89,7 +92,7 @@ public static class ColliderMath
     }
 
     // Box in the collider's local space: clamp each local axis (exact also for rotated and scaled boxes).
-    static Vector3 OnBox(Transform t, Vector3 center, Vector3 size, Vector3 p)
+    public static Vector3 OnBox(Transform t, Vector3 center, Vector3 size, Vector3 p)
     {
         Vector3 l = t.InverseTransformPoint(p) - center, h = size * 0.5F;
         l = new Vector3(Mathf.Clamp(l.x, -h.x, h.x), Mathf.Clamp(l.y, -h.y, h.y), Mathf.Clamp(l.z, -h.z, h.z));
@@ -186,6 +189,13 @@ public class HazardTracker : MonoBehaviour
         foreach (var c in machine.AllColliders) if (c.enabled && !c.isTrigger) list.Add(c);
         all = list.ToArray();
         tracks = machine.TrackColliders;
+        // Size of the bucket box used by HazardMeasure.Bucket (logged once per trial, for checking).
+        var bmc = machine.BucketMeshCollider;
+        if (bmc != null && bmc.sharedMesh != null)
+        {
+            Vector3 sz = Vector3.Scale(bmc.sharedMesh.bounds.size, bmc.transform.lossyScale);
+            StudyLogger.Log("bucket_box", $"size={Mathf.Abs(sz.x):F2}x{Mathf.Abs(sz.y):F2}x{Mathf.Abs(sz.z):F2}");
+        }
     }
 
     void FixedUpdate()
@@ -258,6 +268,22 @@ public class HazardTracker : MonoBehaviour
     }
     static bool Flipped(float a, float b) => a * b < 0F;
 
+    // Whole bucket: closest distance between the hazard and the bucket's oriented box (alternating projections,
+    // exact for convex shapes; 0 when the hazard passes through the box). 'best' = the teeth distance.
+    float BucketDistance(Hazard h, float best)
+    {
+        var mc = machine.BucketMeshCollider;
+        if (mc == null || mc.sharedMesh == null) return best;
+        Bounds b = mc.sharedMesh.bounds;
+        Transform t = mc.transform;
+        Vector3 q = t.TransformPoint(b.center), p = h.ClosestPointTo(q);
+        for (int i = 0; i < 5; i++) { q = ColliderMath.OnBox(t, b.center, b.size, p); p = h.ClosestPointTo(q); }
+        q = ColliderMath.OnBox(t, b.center, b.size, p);
+        float d = (p - q).magnitude;
+        if (d < best) { best = d; h.MachinePoint = q; h.HazardPoint = p; }
+        return best;
+    }
+
     // Boom (radius 0.45 m), arm (0.35 m) and bucket (0.6 m around the hinge->teeth line), sampled every ~0.25 m.
     float AttachmentDistance(Hazard h, float best)
     {
@@ -287,6 +313,7 @@ public class HazardTracker : MonoBehaviour
         float best = (hp0 - tip).magnitude;
         h.MachinePoint = tip; h.HazardPoint = hp0;
         if (h.measure == HazardMeasure.BucketTeethOnly) return best;
+        if (h.measure == HazardMeasure.Bucket) return BucketDistance(h, best);
         if (h.measure == HazardMeasure.Attachment) return AttachmentDistance(h, best);
 
         var cols = h.measure == HazardMeasure.TracksOnly ? tracks : all;
@@ -302,6 +329,10 @@ public class HazardTracker : MonoBehaviour
             float d = (p - q).magnitude;
             if (d < best) { best = d; h.MachinePoint = q; h.HazardPoint = p; }
         }
+        // Whole machine also includes the whole BUCKET body (its collider is switched off in the digging tasks, so
+        // without this only the teeth tip of the bucket counted - a worker right in front of the bucket was measured
+        // to the arm or the cab instead).
+        if (h.measure == HazardMeasure.WholeMachine) best = BucketDistance(h, best);
         return best;
     }
 }

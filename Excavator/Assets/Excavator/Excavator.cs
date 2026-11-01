@@ -487,6 +487,8 @@ public class Excavator
     public Vector3 BoomArmJointPosition => boomArmJoint.position;
     public Vector3 ArmBucketJointPosition => armBucketJoint.position;
     public Transform BucketTransform => bucketAxis;
+    // Study: the bucket's mesh collider (its mesh bounds give the bucket's box for hazard distances; may be disabled).
+    public MeshCollider BucketMeshCollider => bucket != null ? bucket.GetComponent<MeshCollider>() : null;
     // Boom foot (where the boom joins the upper body). Used by the study to measure attachment distances.
     public Vector3 BoomBasePosition => boomAxis.position;
 

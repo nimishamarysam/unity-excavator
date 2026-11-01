@@ -102,6 +102,7 @@ public class DrivingScenario : Scenario
     int contacts;
 
     public override string TaskText => reversing ? "Reverse to the yellow stop line" : "Drive forward through the gates in order";
+    public override string ResultText => $"Gates passed: {nextGate} of {gates.Length}" + (reversing ? "  -  reversing to the stop line" : "");
     public override string ProgressText => reversing
         ? $"{StickControls.Cap(StickControls.DriveBack)} to reverse. The cab keeps facing forward - do not swing it around.\nStop when the middle of the machine is on the yellow line."
         : $"Next: gate {nextGate + 1} of {gates.Length}. {StickControls.Cap(StickControls.DriveForward)}; steer around obstacles and people.";
@@ -216,8 +217,9 @@ public class DrivingScenario : Scenario
 // MODERATE - DIGGING: drive to the work position, dig a trench to 1.6 m (TargetDepth), dump spoil on the white square.
 // Task demands:
 //   - Some driving: the machine starts 9 m behind the work position (yellow box) and must drive there first.
-//   - Strict spoil placement: spoil square (4.5 m) at least 5 m from the trench edge, about 120 degrees
-//     swing from the trench, on the side away from the cable. Dumps outside it are spills; dumps within 5 m
+//   - Strict spoil placement: spoil square (3.0 m, was 4.5 m) about 120 degrees swing from the trench, on the
+//     side away from the cable, ~7.3 m from the swing centre (SpoilDistOfReach; was the nearest spot >= 5 m from
+//     the trench, ~6.3 m) and at least 5 m from the trench edge - smaller and farther, so dumping accuracy matters. Dumps outside it are spills; dumps within 5 m
 //     of the trench edge are logged as "too_close_to_trench" spills.
 //   - Buried cable parallel to the trench (0.5-0.8 m outside the edge, 0.9 m deep), marked with orange posts.
 //   - Crossing service: a pipe crossing the trench 0.25 m BELOW the target depth (yellow posts on both sides).
@@ -227,7 +229,7 @@ public class DrivingScenario : Scenario
 // Hazards also logged by the HazardTracker: over-digging, cable, pipe, trench edge (tracks), worker.
 public class DiggingScenario : Scenario
 {
-    const float TargetDepth = 1.6F;               // was 1.2 m (deeper trench); pipe stays PipeBelowTarget below it
+    public const float TargetDepth = 1.6F;               // was 1.2 m (deeper trench); pipe stays PipeBelowTarget below it
     const float TrenchWidth = 3F;             // was 2 m (bigger dig area)
     // Trench position and length as shares of the max reach, measured from the WORK position. Fitted to the machine's
     // DIG ENVELOPE at the target depth (pilot 2026-10-22, reach 10.1 m): the teeth reach 2.5+ m deep from 3 to 6 m
@@ -236,7 +238,10 @@ public class DiggingScenario : Scenario
     // length 0.5 (to ~8.5 m): the far end could not be dug to depth and progress stopped around 79 %.
     const float TrenchCentreOfReach = 0.54F;
     const float TrenchLengthOfReach = 0.31F;
-    const float SpoilSize = 4.5F;             // was 2.5 m: a full trench of soil (~10 m3 at 1.2 m3 per bucket) overflowed it
+    const float SpoilSize = 3.0F;             // 2026-11-01: was 4.5 m, then 3.5 m (2.5 m before that) - smaller so dumping accuracy matters
+    const float SpoilDistOfReach = 0.72F;     // 2026-11-01: centre of the spoil square at least this share of the reach from the
+                                              // swing centre (~7.3 m; was the nearest spot >= SpoilMinGap from the trench, ~6.3 m)
+    const float SpoilMaxOfReach = 0.85F;
     const float SpoilMinGap = 5F;             // minimum distance between spoil square and trench edge
     const float SpoilSwingDeg = 120F;         // swing angle from the trench direction to the spoil square
     const float PipeBelowTarget = 0.2F;       // crossing pipe depth below the target depth (was 0.25: digging just past the
@@ -295,6 +300,9 @@ public class DiggingScenario : Scenario
     float prevAngleToWorker = -1F;
     Hazard.Level pipeLevel, cableLevel;
 
+    public override string ResultText =>
+        $"Trench done: {(TerrainDigger.Instance != null ? TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance, ProgressWallMargin) * 100F : 0F):0}%  (deepest {maxDepth:0.00} m, target {TargetDepth:0.0} m)\n" +
+        $"Dumps on the white square: {spoilDumps} of {dumpCount}";
     public override string TaskText => arrived ? $"Dig the trench between the stakes to {TargetDepth:0.0} m deep"
                                                : $"Drive into the yellow box ({StickControls.ModeSwitch} for DRIVE mode)";
     public override Vector3? DumpTarget => spoil;
@@ -356,7 +364,7 @@ public class DiggingScenario : Scenario
         pipe.a = new Vector3(pa.x, TerrainDigger.ReferenceGroundHeight(pa) - pipeDepth, pa.z);
         pipe.b = new Vector3(pb.x, TerrainDigger.ReferenceGroundHeight(pb) - pipeDepth, pb.z);
         pipe.hazardId = "crossing_pipe"; pipe.kind = HazardKind.BuriedPipe;
-        pipe.measure = HazardMeasure.BucketTeethOnly; pipe.warnDistance = 0.15F; pipe.contactDistance = 0.05F;   // pipe 1.8 m deep: warning from 1.65 m, strike at 1.75 m (= the over-dig limit)
+        pipe.measure = HazardMeasure.Bucket; pipe.warnDistance = 0.15F; pipe.contactDistance = 0.05F;   // whole bucket (2026-11-01)   // pipe 1.8 m deep: warning from 1.65 m, strike at 1.75 m (= the over-dig limit)
         // Markers only OUTSIDE the trench (a mark across the hole would float in the air once dug).
         foreach (float sgn in new[] { -1F, 1F })
         {
@@ -374,16 +382,9 @@ public class DiggingScenario : Scenario
 
         // Spoil square: ~120 degree swing towards the side away from the cable, at the shortest distance
         // that keeps it at least 5 m from the trench edge.
-        float ang = SpoilSwingDeg * Mathf.Deg2Rad;
-        Vector3 dir = f * Mathf.Cos(ang) + r * (-side) * Mathf.Sin(ang);
         Vector3 c0 = WorldBuilder.OnGround(workPos);
-        spoil = c0 + dir * (0.85F * reach);
-        bool ok = false;
-        for (float d = 0.5F * reach; d <= 0.85F * reach + 1e-3F; d += 0.1F)
-        {
-            Vector3 p = WorldBuilder.OnGround(c0 + dir * d);
-            if (GapToTrench(p, SpoilSize / 2F) >= SpoilMinGap) { spoil = p; ok = true; break; }
-        }
+        spoil = WorldBuilder.OnGround(SpoilCentre(c0, f, r, side, reach, trench, trenchLen, out bool ok));
+        LastReach = reach;
         if (!ok) Debug.LogWarning($"[Study] Spoil square only {GapToTrench(spoil, SpoilSize / 2F):F1} m from the trench (reach {reach:F1} m)");
         Outline("spoil", spoil, f, SpoilSize, SpoilSize, WorldBuilder.White);
         StudyLogger.Log("layout", $"fixed={(FixedLayout ? 1 : 0)};reach={reach:F2};spoil_gap={GapToTrench(spoil, SpoilSize / 2F):F2};spoil_dist={(spoil - c0).magnitude:F2};pipe_depth={pipeDepth:F2};cable_side={side}");
@@ -436,12 +437,93 @@ public class DiggingScenario : Scenario
     }
 
     // Distance from a square (centre p, half size h, aligned with the trench) to the trench rectangle.
-    float GapToTrench(Vector3 p, float h)
+    float GapToTrench(Vector3 p, float h) => GapToRect(p, h, trench, f, r, trenchLen);
+
+    static float GapToRect(Vector3 p, float h, Vector3 trenchC, Vector3 fw, Vector3 rt, float len)
     {
-        Vector3 d = p - trench;
-        float du = Mathf.Abs(Vector3.Dot(d, f)) - (trenchLen / 2F + h);
-        float dv = Mathf.Abs(Vector3.Dot(d, r)) - (TrenchWidth / 2F + h);
+        Vector3 d = p - trenchC;
+        float du = Mathf.Abs(Vector3.Dot(d, fw)) - (len / 2F + h);
+        float dv = Mathf.Abs(Vector3.Dot(d, rt)) - (TrenchWidth / 2F + h);
         return new Vector2(Mathf.Max(0F, du), Mathf.Max(0F, dv)).magnitude;
+    }
+
+    // Spoil square centre: SpoilSwingDeg swing towards the side away from the cable, at SpoilDistOfReach of the reach
+    // (or farther, up to SpoilMaxOfReach, until it is SpoilMinGap from the trench). Used by Build and the briefing map.
+    static Vector3 SpoilCentre(Vector3 c0, Vector3 fw, Vector3 rt, float side, float reach, Vector3 trenchC, float len, out bool ok)
+    {
+        float ang = SpoilSwingDeg * Mathf.Deg2Rad;
+        Vector3 dir = fw * Mathf.Cos(ang) + rt * (-side) * Mathf.Sin(ang);
+        ok = false;
+        for (float d = SpoilDistOfReach * reach; d <= SpoilMaxOfReach * reach + 1e-3F; d += 0.1F)
+        {
+            Vector3 p = c0 + dir * d;
+            if (GapToRect(p, SpoilSize / 2F, trenchC, fw, rt, len) >= SpoilMinGap) { ok = true; return p; }
+        }
+        return c0 + dir * (SpoilMaxOfReach * reach);
+    }
+
+    // ---- Briefing (task instruction screen): site map with legend, and which side things are on ----
+    public static float LastReach = 10.14F;   // machine reach (updated from the real machine in Build)
+
+    // The fixed layout's random choices, drawn in the SAME order as Build (side, cable gap, pipe position).
+    static void FixedLayoutValues(out float side, out float cableGap, out float crossFrac)
+    {
+        var rng = new System.Random(LayoutSeed);
+        side = rng.NextDouble() < 0.5 ? 1F : -1F;
+        cableGap = CableGapMin + (float)rng.NextDouble() * (CableGapMax - CableGapMin);
+        crossFrac = -0.2F + (float)rng.NextDouble() * 0.4F;
+    }
+
+    // "right" / "left" as seen from the cab at the work position (null when the layout varies per trial).
+    public static void BriefingSides(out string cableSide, out string dumpSide)
+    {
+        if (!FixedLayout) { cableSide = dumpSide = null; return; }
+        FixedLayoutValues(out float side, out _, out _);
+        cableSide = side > 0F ? "right" : "left";
+        dumpSide = side > 0F ? "left" : "right";
+    }
+
+    public static MiniMap SiteMap()
+    {
+        float reach = LastReach;
+        Vector3 F = Vector3.right, R = Vector3.Cross(Vector3.up, F);
+        float side = 1F, gap = CableGapMin, crossFrac = 0F;
+        if (FixedLayout) FixedLayoutValues(out side, out gap, out crossFrac);
+        float len = TrenchLengthOfReach * reach, hw = TrenchWidth / 2F;
+        Vector3 c0 = workPos, trenchC = c0 + F * (TrenchCentreOfReach * reach);
+        Vector3 spoilC = SpoilCentre(c0, F, R, side, reach, trenchC, len, out _);
+        Vector3 start = workPos - F * StartBehind;
+        float off = side * (hw + gap);
+        Vector3 ca = trenchC - F * (len / 2F + 2F) + R * off, cb = trenchC + F * (len / 2F + 2F) + R * off;
+        Vector3 cross = trenchC + F * crossFrac * len;
+
+        Color brown = new Color(0.55F, 0.38F, 0.22F), yellow = WorldBuilder.Yellow, orange = WorldBuilder.Orange,
+              white = Color.white, cyan = new Color(0.1F, 0.85F, 1F), pipeBlue = new Color(0.3F, 0.6F, 1F);
+        var m = new MiniMap { Up = F, LineWidth = 4F, FontSize = 15 };
+        m.Line(start, c0, cyan);
+        m.Dot(start, 0.5F, cyan);
+        m.Label(start - F * 1.2F, "START", cyan);
+        m.Rect(c0, 5.0F, 4.0F, yellow, false);
+        m.Label(c0, "WORK\nBOX", yellow);
+        m.Rect(trenchC, len, TrenchWidth, brown);
+        m.Label(trenchC, "DIG", white);
+        m.Line(ca, cb, orange);
+        for (float s = 0; s <= 1.001F; s += 0.25F) m.Dot(Vector3.Lerp(ca, cb, s), 0.35F, orange);
+        m.Label(cb + F * 1.4F, "cable", orange);
+        m.Line(cross - R * (hw + 1.5F), cross + R * (hw + 1.5F), pipeBlue);
+        foreach (float sgn in new[] { -1F, 1F }) m.Dot(cross + R * sgn * (hw + 0.9F), 0.35F, yellow);
+        m.Label(cross - R * side * (hw + 2.6F), "pipe", pipeBlue);
+        m.Rect(spoilC, SpoilSize, SpoilSize, white, false);
+        m.Label(spoilC, "DUMP", white);
+        m.Label(trenchC + F * (len / 2F + 3.4F), "\u2191 cab faces this way", white);
+
+        m.AddLegend(MiniMap.Kind.Fill, brown, $"DIG PIT (trench): Dig only inside it, {TargetDepth:0.0} m deep");
+        m.AddLegend(MiniMap.Kind.Outline, white, "DUMP PIT: Put ALL the soil here (anywhere else is a spill)");
+        m.AddLegend(MiniMap.Kind.Outline, yellow, "WORK BOX: Drive the machine in here and dig from here");
+        m.AddLegend(MiniMap.Kind.Dot, orange, "ORANGE posts: A buried electric CABLE runs along the trench between them");
+        m.AddLegend(MiniMap.Kind.Dot, yellow, $"YELLOW posts: A water PIPE crosses UNDER the trench between them, just below {TargetDepth:0.0} m");
+        m.AddLegend(MiniMap.Kind.Dot, cyan, "START: Initial position in the scenario");
+        return m;
     }
 
     protected override void Tick()
@@ -607,6 +689,9 @@ public class DiggingScenario : Scenario
 public class DigDumpScenario : Scenario
 {
     const int Goal = 4;
+    // 2026-11-01: a truck load counts only when the bucket is at least this full when it is emptied into the truck
+    // (BUCKET LOAD in the status bar). Less is logged as truck_load_too_small and not counted (not a spill).
+    public const float MinLoadFill = 0.8F;
     const float Limit = 360F;          // seconds (other scenarios: StudyManager.trialDurationSeconds)
     // Lane waypoints in "lane coordinates": (metres back from the DIG box, metres to the right).
     static readonly Vector2 W1 = new Vector2(4F, 0F);      // end of the first straight -> turn right
@@ -616,7 +701,9 @@ public class DigDumpScenario : Scenario
     // (was 0.62: dumping now needs the arm further out and the bucket higher over the truck wall).
     const float TruckOffset = 0.75F;
     const float PowerLineHeight = 5.8F;        // pole height; wire hangs 0.3 m lower (was 7.5 m)
-    const float PowerLineBeyondTruck = 1.6F;   // wire this far beyond the truck centre line = above the far bed wall (was 2.5 m)
+    const float PowerLineBeyondTruck = WorldBuilder.TruckBedWidth / 2F;   // wire above the far bed wall (was 1.6 m for the 3.2 m bed)
+    // Soil counts as IN the truck only when released over the bed itself (was 0.3 m extra around the bed).
+    const float TruckDumpMargin = 0F;
     public const bool PitPipeEnabled = true;
     const float PipeDepth = 1.2F;              // pipe below the original ground in the pit
 
@@ -631,7 +718,8 @@ public class DigDumpScenario : Scenario
     float pitWorkerAt, truckWorkerAt;
     float reach;
 
-    public override string TaskText => $"Load the truck {Goal} times";
+    public override string TaskText => $"Load the truck {Goal} times (bucket at least {MinLoadFill * 100F:0}% full)";
+    public override string ResultText => $"Truck loads: {loads} of {Goal}";
     public override Vector3? DumpTarget => bedCenter;
     // C3 digging cues (trajectory, depth arrow, section view): keep the scoops shallow, above the pipe.
     public override float? DigTargetDepth => PitPipeEnabled ? PipeDepth - 0.3F : (float?)null;
@@ -646,8 +734,12 @@ public class DigDumpScenario : Scenario
             Vector3 c = M.SwingCenter;
             bool atDig = new Vector2(c.x - digPos.x, c.z - digPos.z).magnitude < 1.5F;
             string next;
-            if (loaded && atDump)  next = "Swing the cab LEFT to the truck and empty the bucket into the truck bed.";
-            else if (loaded)       next = $"REVERSE to the DUMP box: {StickControls.DriveBack}. The cab keeps facing the pit - do not swing it. The lane bends right, then left.";
+            bool full = load != null && load.Fill >= MinLoadFill;
+            if (loaded && !full && atDig) next = $"Bucket only {Mathf.RoundToInt(load.Fill * 100F)}% full - scoop more until BUCKET LOAD is at least {MinLoadFill * 100F:0}%.";
+            else if (loaded && atDump)  next = "Swing the cab LEFT to the truck and empty the bucket into the truck bed." +
+                                               (full ? "" : $" (Only {Mathf.RoundToInt(load.Fill * 100F)}% full - this load will not count.)");
+            else if (loaded && full)    next = $"REVERSE to the DUMP box: {StickControls.DriveBack}. The cab keeps facing the pit - do not swing it. The lane bends right, then left.";
+            else if (loaded)            next = $"Bucket only {Mathf.RoundToInt(load.Fill * 100F)}% full - fill it to at least {MinLoadFill * 100F:0}% at the pit before going to the truck.";
             else if (atDig)        next = "Fill the bucket from the brown pit in front of you.";
             else                   next = "Drive FORWARD along the lane back to the DIG box.";
             return $"Loads: {loads} / {Goal}      Time left: {Mathf.FloorToInt(remaining / 60)}:{Mathf.FloorToInt(remaining % 60):00}\nNext: {next}";
@@ -658,30 +750,42 @@ public class DigDumpScenario : Scenario
     Vector3 L(float back, float rightOff) => WorldBuilder.OnGround(digPos - f * back - left * rightOff);
     Vector3 L(Vector2 v) => L(v.x, v.y);
 
-    // Where the C3 driving path leads. Normally: loaded -> DUMP box, empty -> DIG box. When the machine is
-    // already in that box (e.g. at the start, empty at the DIG box) the path switches to the OTHER box, so
-    // there is always a path while driving, whether or not there is soil in the bucket.
-    bool routeToDump, wasLoaded, inRouteTarget;
+    // Where the driving route leads (C3 driving path AND the task panel's line map), 2026-11-01:
+    //   loaded bucket -> DUMP box; empty after dumping -> DIG box.
+    // The route is shown ONLY when the work at the current box is done AND the machine is in DRIVE mode:
+    //   - to the DUMP box: once the bucket is loaded to at least MinLoadFill (80 %) and DRIVE mode is on;
+    //   - back to the DIG box: once the soil has been dumped and DRIVE mode is on.
+    // No route at the start (empty, at the DIG box), while digging / dumping (DIG mode), or once inside the target box.
+    bool routeToDump, hasRoute, dumpedSinceLoad;
 
     void UpdateRouteTarget()
     {
         bool loaded = load != null && load.IsLoaded;
-        if (loaded != wasLoaded) { wasLoaded = loaded; routeToDump = loaded; }   // new load -> truck; dumped -> pit
-        Vector3 target = routeToDump ? dumpPos : digPos, c = M.SwingCenter;
-        bool inside = new Vector2(c.x - target.x, c.z - target.z).magnitude < 1.2F;
-        if (inside && !inRouteTarget) routeToDump = !routeToDump;              // arrived: next leg goes the other way
-        inRouteTarget = new Vector2(c.x - (routeToDump ? dumpPos : digPos).x, c.z - (routeToDump ? dumpPos : digPos).z).magnitude < 1.2F;
+        if (loaded) dumpedSinceLoad = false;
+        bool fullEnough = loaded && load.Fill >= MinLoadFill;   // route to the truck only for a load that will count
+        routeToDump = loaded;
+        Vector3 target = loaded ? dumpPos : digPos, c = M.SwingCenter;
+        bool atTarget = new Vector2(c.x - target.x, c.z - target.z).magnitude < 1.2F;
+        hasRoute = Ctl != null && Ctl.IsTravelMode && !atTarget && (fullEnough || (!loaded && dumpedSinceLoad));
     }
 
     public override string RouteTargetName => routeToDump ? "DUMP BOX" : "DIG BOX";
 
+    // Remaining lane points in driving order, or null when no route is shown (see above).
+    System.Collections.Generic.List<Vector3> CurrentRoute()
+    {
+        UpdateRouteTarget();
+        if (!hasRoute) return null;
+        return routeToDump ? new System.Collections.Generic.List<Vector3> { L(W1), L(W2), L(WP) }
+                           : new System.Collections.Generic.List<Vector3> { L(W2), L(W1), L(Vector2.zero) };
+    }
+
     // C3 driving cue: along the lane to the DUMP box (reversing) or back to the DIG box (forward).
     public override System.Collections.Generic.List<Vector3> RouteAhead(out bool reverse)
     {
-        UpdateRouteTarget();
+        var route = CurrentRoute();
         reverse = routeToDump;
-        return routeToDump ? new System.Collections.Generic.List<Vector3> { L(W1), L(W2), L(WP) }
-                           : new System.Collections.Generic.List<Vector3> { L(W2), L(W1), L(Vector2.zero) };
+        return route;
     }
 
     protected override void Build()
@@ -750,7 +854,7 @@ public class DigDumpScenario : Scenario
             pipe.b = new Vector3(pb.x, TerrainDigger.ReferenceGroundHeight(pb) - PipeDepth, pb.z);
             pipe.hazardId = "pit_pipe"; pipe.kind = HazardKind.BuriedPipe;
             // distances to the pipe AXIS: pipe radius 0.15 m, so contact = teeth touch the pipe, warning = 0.25 m from it
-            pipe.measure = HazardMeasure.BucketTeethOnly; pipe.warnDistance = 0.4F; pipe.contactDistance = 0.17F;
+            pipe.measure = HazardMeasure.Bucket; pipe.warnDistance = 0.4F; pipe.contactDistance = 0.17F;   // whole bucket (2026-11-01)
             // The pipe itself (no collider): hidden by the ground until it is dug free, visible in the cut-away side view.
             var pipeBody = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             pipeBody.name = "PitPipeBody";
@@ -783,7 +887,11 @@ public class DigDumpScenario : Scenario
         load.Init(M);
         load.Dumped += p =>
         {
-            if (InRect(p, bedCenter, f, WorldBuilder.TruckBedLength, WorldBuilder.TruckBedWidth, 0.3F)) { loads++; StudyLogger.Log("truck_load", $"{loads};amount={load.LastDumpAmount:F2}"); if (loads >= Goal) Complete("completed"); }
+            dumpedSinceLoad = true;   // route back to the DIG box may now be shown (in DRIVE mode)
+            bool inTruck = InRect(p, bedCenter, f, WorldBuilder.TruckBedLength, WorldBuilder.TruckBedWidth, TruckDumpMargin);
+            if (inTruck && load.LastDumpAmount < MinLoadFill - 1e-3F)
+                StudyLogger.Log("truck_load_too_small", $"amount={load.LastDumpAmount:F2};min={MinLoadFill:F2}");   // in the truck, but not counted
+            else if (inTruck) { loads++; StudyLogger.Log("truck_load", $"{loads};amount={load.LastDumpAmount:F2}"); if (loads >= Goal) Complete("completed"); }
             else { spills++; StudyLogger.Log("spill", $"missed_truck;amount={load.LastDumpAmount:F2}"); }
         };
     }
@@ -800,7 +908,9 @@ public class DigDumpScenario : Scenario
         m.Label(digPos + f * 2.6F, "DIG", WorldBuilder.Yellow);
         m.Label(dumpPos - f * 2.6F, "DUMP", WorldBuilder.Yellow);
         m.Here = () => M.SwingCenter;
+        // Destination ring + direction arrows only when a route is shown (loaded / dumped, and in DRIVE mode).
         m.Target = () => routeToDump ? dumpPos : digPos;
+        m.Route = CurrentRoute;
         Map = m;
     }
 
@@ -841,6 +951,14 @@ public class DigDumpScenario : Scenario
         foreach (var br in new[] { LS(2.5F, 3.4F), LS(4F, 5.1F), LS(16.5F, 8.6F) }) m.Dot(br, 0.4F, new Color(0.3F, 0.55F, 1F));
         m.Label(LS(4F, 6.8F), "barrels", new Color(0.4F, 0.65F, 1F));
         m.Label(dig + F * 7.5F + Lf * 6F, "\u2191 cab faces this way", Color.white);
+
+        m.AddLegend(MiniMap.Kind.Fill, brown, "PIT: dig the soil here (only inside it)");
+        m.AddLegend(MiniMap.Kind.Outline, yellow, "DIG box / DUMP box: where the machine stands to dig / to dump");
+        m.AddLegend(MiniMap.Kind.Fill, new Color(0.95F, 0.8F, 0.15F), "TRUCK: empty the bucket into its bed");
+        m.AddLegend(MiniMap.Kind.Line, cyan, "Lane: drive along it between the two boxes");
+        m.AddLegend(MiniMap.Kind.Line, new Color(0.3F, 0.6F, 1F), "Water PIPE under the pit, between the YELLOW posts - do not dig into it");
+        m.AddLegend(MiniMap.Kind.Line, new Color(0.05F, 0.05F, 0.05F), "LOW power line beyond the truck - keep the bucket away from it");
+        m.AddLegend(MiniMap.Kind.Fill, grey, "Concrete blocks, orange fence, blue barrels: obstacles - do not hit them");
         return m;
     }
 

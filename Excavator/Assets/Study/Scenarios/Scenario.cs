@@ -20,6 +20,8 @@ public abstract class Scenario : MonoBehaviour
 
     public abstract string TaskText { get; }
     public virtual string ProgressText => "";
+    // Result shown on the "Task complete" screen (e.g. "Truck loads: 3 of 4"); "" = none.
+    public virtual string ResultText => "";
 
     // Where loaded soil should go (truck bed or spoil square), or null if the scenario has no dumping.
     public virtual Vector3? DumpTarget => null;
