@@ -144,6 +144,41 @@ public abstract class Scenario : MonoBehaviour
             WorldBuilder.Shape(PrimitiveType.Cylinder, Root, name + "_stake", center + c, new Vector3(0.08F, 0.4F, 0.08F), color, 0, false);
     }
 
+    // DUMPED SOIL PARTLY OUTSIDE THE DUMP AREA (2026-11-02): the soil lands as a round pile of radius SpillRadius(amount)
+    // around the release point; a dump is a SPILL (incident) when more than SpillOutsideShare of that pile lies outside
+    // the dump area (spoil square / truck bed). Before, only the release point was checked (with 0.3 m extra margin).
+    public const float SpillOutsideShare = 0.25F;
+    public static float SpillRadius(float amount) => 0.35F + 0.35F * Mathf.Clamp01(amount);   // full bucket: 0.7 m
+
+    // Share (0..1) of a disc (centre p, radius rad) that lies outside the rectangle.
+    protected static float OutsideShare(Vector3 p, float rad, Vector3 center, Vector3 forward, float length, float width)
+    {
+        const int n = 12;
+        int total = 0, outside = 0;
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++)
+            {
+                float u = ((i + 0.5F) / n * 2F - 1F) * rad, v = ((j + 0.5F) / n * 2F - 1F) * rad;
+                if (u * u + v * v > rad * rad) continue;
+                total++;
+                if (!InRect(p + new Vector3(u, 0F, v), center, forward, length, width)) outside++;
+            }
+        return total == 0 ? 0F : outside / (float)total;
+    }
+
+    // WORKING POSITION (2026-11-02): each scoop (bucket filled) and each dump is checked against the marked yellow
+    // box the machine should stand in. Always logged as "position_check"; outside the box (swing centre outside the
+    // rectangle) also as "not_in_box", which is an incident ("Dug / dumped from outside the marked box").
+    protected void CheckInBox(string what, string boxName, Vector3 boxCenter, Vector3 forward, float length, float width)
+    {
+        Vector3 c = M.SwingCenter, fw = new Vector3(forward.x, 0F, forward.z).normalized, rt = Vector3.Cross(Vector3.up, fw);
+        Vector3 d = c - boxCenter;
+        bool inBox = InRect(c, boxCenter, fw, length, width);
+        string pos = $"along={Vector3.Dot(d, fw):F2};across={Vector3.Dot(d, rt):F2}";
+        StudyLogger.Log("position_check", $"{what};box={boxName};in_box={(inBox ? 1 : 0)};{pos}");
+        if (!inBox) StudyLogger.Log("not_in_box", $"{what};box={boxName};{pos}");
+    }
+
     protected static bool InRect(Vector3 p, Vector3 center, Vector3 forward, float length, float width, float margin = 0F)
     {
         Vector3 f = new Vector3(forward.x, 0, forward.z).normalized, r = Vector3.Cross(Vector3.up, f), d = p - center;

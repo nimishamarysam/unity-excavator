@@ -7,7 +7,10 @@ using UnityEngine;
 //   * OUTWARDS: no pushing the bucket away from the cab (arm out or opening the bucket) into undug soil
 //     beyond it. Logged once per episode as "push_blocked_soil".
 // Moving towards the part of the hole that is already dug, pulling the bucket in, curling it and lifting it
-// out all work as normal. The cut reaches CutRadius (0.6 m) around the teeth, so the checks look just beyond
+// out all work as normal.
+// 2026-11-02: while ANY part of the bucket (teeth or bucket body) is in the ground OUTSIDE the dig area, nothing is
+// blocked, so the operator can always move the bucket back inside (open it, push the arm out, swing) after an
+// "outside the area" warning - before, curling at the edge could leave the bucket outside and stuck. The cut reaches CutRadius (0.6 m) around the teeth, so the checks look just beyond
 // that (sideGap / frontGap). Soil counts when it is more than embedTolerance above the bucket's lower edge.
 //
 // Every physics step, after the ExcavatorController (and BucketBlocker) applied the input, the new pose is
@@ -40,7 +43,9 @@ public class SoilSideBlocker : MonoBehaviour
         var sm = StudyManager.Instance;
         if (m == null || sm == null || !sm.IsTrialRunning || TerrainDigger.Instance == null) { hasPrev = false; return; }
 
-        if (hasPrev)
+        // Bucket partly outside the dig area: no soil blocking at all (it must be possible to move back in).
+        bool outside = OutsideArea();
+        if (hasPrev && !outside)
         {
             // SIDEWAYS
             if (Enabled && Mathf.Abs(Mathf.DeltaAngle(pSwing, m.swingAngle)) > MinSwing)
@@ -73,6 +78,14 @@ public class SoilSideBlocker : MonoBehaviour
         pSwing = m.swingAngle; pBoom = m.boomAngle; pArm = m.armAngle; pBucket = m.bucketAngle;
         pTip = m.BucketTipPosition; pMid = Mid();
         hasPrev = true;
+    }
+
+    bool OutsideArea()
+    {
+        var d = TerrainDigger.Instance;
+        Vector3 tip = m.BucketTipPosition;
+        if (!d.Contains(tip, 0F) && TerrainDigger.ReferenceGroundHeight(tip) - tip.y > 0.05F) return true;
+        return BucketLoad.BucketBodyOutside(m, d, 0F, 0.05F, out _);
     }
 
     Vector3 Mid() => Vector3.Lerp(m.ArmBucketJointPosition, m.BucketTipPosition, 0.5F);

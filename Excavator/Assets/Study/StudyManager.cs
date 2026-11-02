@@ -388,6 +388,10 @@ public class StudyManager : MonoBehaviour
                 }
                 list.Add(new ScreenItem("Task: " + StudyDesign.ScenarioLabel(t.scenario), space: 10));
                 list.Add(new ScreenItem(StudyDesign.ScenarioBriefing(t.scenario)));
+                // C1 baseline, dig and dump: no extra camera views - say so for the reversing legs.
+                if (t.condition == StudyCondition.C1_Baseline && t.scenario == StudyScenario.Hard_DigAndDump)
+                    list.Add(new ScreenItem("In this task you have NO extra camera views. When reversing along the lane to the DUMP box, " +
+                                            "your only aid for seeing behind the machine is the REAR-VIEW MIRROR on the left of the cab.", space: 8));
                 list.Add(new ScreenItem(StickControls.PressConfirm + " when you are ready to start.", true, 16, true));
                 break;
 

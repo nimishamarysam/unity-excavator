@@ -408,12 +408,16 @@ public class DiggingScenario : Scenario
             float u = Mathf.Max(Mathf.Abs(Vector3.Dot(dd, f)), Mathf.Abs(Vector3.Dot(dd, r))) / (SpoilSize / 2F);
             float vol = load.LastDumpAmount * load.bucketCapacity;
             dumpCount++; dumpOffsetSum += off; dumpOffsetMax = Mathf.Max(dumpOffsetMax, off); dumpEdgeSum += u; dumpedM3 += vol;
-            bool inside = InRect(p, spoil, f, SpoilSize, SpoilSize, 0.3F);
-            if (!inside) spilledM3 += vol;
+            float outShare = OutsideShare(p, SpillRadius(load.LastDumpAmount), spoil, f, SpoilSize, SpoilSize);
+            bool inside = outShare <= SpillOutsideShare;   // more than 25 % of the pile outside the square = spill
+            spilledM3 += vol * outShare;                   // the part of the soil that landed outside (was: all or nothing)
+            if (inside && outShare > 0.01F) StudyLogger.Log("dump_partly_outside", $"share={outShare:F2}");
+            // Position check only for soil that went onto the square (a miss is already a spill).
+            if (inside) CheckInBox("dump", "work_box", WorldBuilder.OnGround(workPos), f, 5.0F, 4.0F);
             StudyLogger.Log("dump_position", $"offset={off:F2};edge={u:F2};m3={vol:F2}");
             if (inside) { spoilDumps++; StudyLogger.Log("dump", $"spoil_area;amount={load.LastDumpAmount:F2}"); }
-            else if (GapToTrench(p, 0F) < SpoilMinGap) { spills++; tooClose++; StudyLogger.Log("spill", $"too_close_to_trench;gap={GapToTrench(p, 0F):F2};amount={load.LastDumpAmount:F2}"); }
-            else { spills++; StudyLogger.Log("spill", $"outside_spoil_area;amount={load.LastDumpAmount:F2}"); }
+            else if (GapToTrench(p, 0F) < SpoilMinGap) { spills++; tooClose++; StudyLogger.Log("spill", $"too_close_to_trench;gap={GapToTrench(p, 0F):F2};amount={load.LastDumpAmount:F2};outside_share={outShare:F2}"); }
+            else { spills++; StudyLogger.Log("spill", $"outside_spoil_area;amount={load.LastDumpAmount:F2};outside_share={outShare:F2}"); }
         };
 
         // Start position: 9 m behind the work position, same heading.
@@ -526,9 +530,15 @@ public class DiggingScenario : Scenario
         return m;
     }
 
+    bool loadedBefore;   // for the scoop position check
+
     protected override void Tick()
     {
         float t = SM.TrialTime;
+
+        bool loadedNow = load != null && load.IsLoaded;
+        if (loadedNow && !loadedBefore) CheckInBox("dig", "work_box", WorldBuilder.OnGround(workPos), f, 5.0F, 4.0F);
+        loadedBefore = loadedNow;
 
         if (!arrived)
         {
@@ -716,6 +726,8 @@ public class DigDumpScenario : Scenario
     bool atDump;
     WorkerWalker pitWorker, truckWorker;
     float pitWorkerAt, truckWorkerAt;
+    bool loadedBefore;                 // for the scoop position check
+    const float TruckWorkerTriggerDist = 7F;   // worker between the DUMP box and the truck: sent when reversing within 7 m
     float reach;
 
     public override string TaskText => $"Load the truck {Goal} times (bucket at least {MinLoadFill * 100F:0}% full)";
@@ -753,7 +765,7 @@ public class DigDumpScenario : Scenario
     // Where the driving route leads (C3 driving path AND the task panel's line map), 2026-11-01:
     //   loaded bucket -> DUMP box; empty after dumping -> DIG box.
     // The route is shown ONLY when the work at the current box is done AND the machine is in DRIVE mode:
-    //   - to the DUMP box: once the bucket is loaded to at least MinLoadFill (80 %) and DRIVE mode is on;
+    //   - to the DUMP box: once the bucket is loaded (any scoop) and DRIVE mode is on;
     //   - back to the DIG box: once the soil has been dumped and DRIVE mode is on.
     // No route at the start (empty, at the DIG box), while digging / dumping (DIG mode), or once inside the target box.
     bool routeToDump, hasRoute, dumpedSinceLoad;
@@ -762,11 +774,12 @@ public class DigDumpScenario : Scenario
     {
         bool loaded = load != null && load.IsLoaded;
         if (loaded) dumpedSinceLoad = false;
-        bool fullEnough = loaded && load.Fill >= MinLoadFill;   // route to the truck only for a load that will count
         routeToDump = loaded;
         Vector3 target = loaded ? dumpPos : digPos, c = M.SwingCenter;
         bool atTarget = new Vector2(c.x - target.x, c.z - target.z).magnitude < 1.2F;
-        hasRoute = Ctl != null && Ctl.IsTravelMode && !atTarget && (fullEnough || (!loaded && dumpedSinceLoad));
+        // Route to the truck for ANY load (the task panel says when it is below 80 % and will not count);
+        // gating it on 80 % hid the path while reversing with a smaller load (2026-11-02).
+        hasRoute = Ctl != null && Ctl.IsTravelMode && !atTarget && (loaded || dumpedSinceLoad);
     }
 
     public override string RouteTargetName => routeToDump ? "DUMP BOX" : "DIG BOX";
@@ -842,6 +855,12 @@ public class DigDumpScenario : Scenario
         powerLine.measure = HazardMeasure.Attachment;
         powerLine.warnDistance = 1.5F;
         powerLine.contactDistance = 0.3F;
+        // 2026-11-02: the wire is SOLID for the bucket and arm (BucketBlocker), so they stop at it instead of passing
+        // through it (it looked as if the wire went through the bucket). Trigger collider: it does not push the
+        // machine. The touch itself is counted by the power-line hazard (contact), not as a truck hit.
+        var wireCol = powerLine.gameObject.AddComponent<CapsuleCollider>();   // cylinder primitive: radius 0.5, height 2 (scaled)
+        wireCol.isTrigger = true;
+        BucketBlocker.Solids.Add(wireCol);
 
         // Water pipe crossing under the pit (across the arm's direction), marked with yellow posts outside the pit.
         if (PitPipeEnabled)
@@ -888,11 +907,16 @@ public class DigDumpScenario : Scenario
         load.Dumped += p =>
         {
             dumpedSinceLoad = true;   // route back to the DIG box may now be shown (in DRIVE mode)
-            bool inTruck = InRect(p, bedCenter, f, WorldBuilder.TruckBedLength, WorldBuilder.TruckBedWidth, TruckDumpMargin);
+            float outShare = OutsideShare(p, SpillRadius(load.LastDumpAmount), bedCenter, f,
+                                          WorldBuilder.TruckBedLength + 2F * TruckDumpMargin, WorldBuilder.TruckBedWidth + 2F * TruckDumpMargin);
+            bool inTruck = outShare <= SpillOutsideShare;   // more than 25 % of the soil outside the bed = spill (missed_truck)
+            if (inTruck && outShare > 0.01F) StudyLogger.Log("dump_partly_outside", $"share={outShare:F2}");
+            // Position check only for soil that went into the truck (a miss is already a spill).
+            if (inTruck) CheckInBox("dump", "dump_box", WorldBuilder.OnGround(dumpPos), f, 5.5F, 4.5F);
             if (inTruck && load.LastDumpAmount < MinLoadFill - 1e-3F)
                 StudyLogger.Log("truck_load_too_small", $"amount={load.LastDumpAmount:F2};min={MinLoadFill:F2}");   // in the truck, but not counted
             else if (inTruck) { loads++; StudyLogger.Log("truck_load", $"{loads};amount={load.LastDumpAmount:F2}"); if (loads >= Goal) Complete("completed"); }
-            else { spills++; StudyLogger.Log("spill", $"missed_truck;amount={load.LastDumpAmount:F2}"); }
+            else { spills++; StudyLogger.Log("spill", $"missed_truck;amount={load.LastDumpAmount:F2};outside_share={outShare:F2}"); }
         };
     }
 
@@ -919,46 +943,77 @@ public class DigDumpScenario : Scenario
     static Vector3 LS(float back, float rightOff) => digPos - Vector3.right * back - new Vector3(0, 0, 1) * rightOff;   // f = +x, left = +z
 
     // Detailed site map for the task instruction screen (drawn before the trial, so it uses static geometry).
+    // 2026-11-02 redesign (C1 has no other aid): few labels, only where there is free space, and all of them in
+    // CAPITALS matching the briefing; everything else is explained in the legend. Your machine is drawn at the
+    // start in the DIG BOX with an arrow for the cab direction; arrows on the lane show the way to reverse to the
+    // DUMP BOX; an arrow from the DUMP BOX shows the swing to the truck.
     public static MiniMap SiteMap()
     {
         Vector3 F = Vector3.right, Lf = new Vector3(0, 0, 1);
         float reach = LastReach;
         Vector3 dig = digPos, dump = LS(WP.x, WP.y), pit = dig + F * (0.6F * reach);
         Vector3 truck = dump + Lf * (TruckOffset * reach) + F * 1F, line = dump + Lf * (TruckOffset * reach + PowerLineBeyondTruck);
-        Color yellow = WorldBuilder.Yellow, cyan = new Color(0.1F, 0.85F, 1F), brown = new Color(0.55F, 0.38F, 0.22F), grey = new Color(0.75F, 0.75F, 0.72F);
+        Color yellow = WorldBuilder.Yellow, cyan = new Color(0.1F, 0.85F, 1F), brown = new Color(0.62F, 0.42F, 0.24F),
+              brownEdge = new Color(0.85F, 0.6F, 0.35F), grey = new Color(0.75F, 0.75F, 0.72F), truckCol = new Color(0.95F, 0.8F, 0.15F),
+              pipeCol = new Color(0.3F, 0.6F, 1F), wireCol = new Color(0.72F, 0.68F, 0.85F), machine = new Color(0.97F, 0.97F, 0.97F),
+              barrel = new Color(0.3F, 0.55F, 1F), swing = new Color(1F, 0.55F, 0.2F);
 
-        var m = new MiniMap { Up = F, LineWidth = 4F, FontSize = 15 };
+        var m = new MiniMap { Up = F, LineWidth = 4F, FontSize = 13 };
+        void Arrow(Vector3 a, Vector3 b, Color c, float head = 1.0F)
+        {
+            m.Line(a, b, c);
+            Vector3 d = (b - a).normalized, n = Vector3.Cross(Vector3.up, d);
+            m.Line(b, b - d * head + n * head * 0.6F, c);
+            m.Line(b, b - d * head - n * head * 0.6F, c);
+        }
+        void Head(Vector3 a, Vector3 b, Color c)   // arrowhead in the middle of a segment, pointing a -> b
+        {
+            Vector3 mid = (a + b) / 2F, d = (b - a).normalized, n = Vector3.Cross(Vector3.up, d);
+            m.Line(mid, mid - d * 1.0F + n * 0.7F, c);
+            m.Line(mid, mid - d * 1.0F - n * 0.7F, c);
+        }
+
+        // DIG PIT: brown fill with a light edge, label in its upper part (the pipe crosses the middle).
         m.Rect(pit, 4.5F, 4.5F, brown);
-        m.Label(pit + F * 1.4F, "PIT", Color.white);
-        m.Rect(dig, 5.5F, 4.5F, yellow, false);
-        m.Label(dig, "DIG\n(start)", yellow);
-        m.Rect(dump, 5.5F, 4.5F, yellow, false);
-        m.Label(dump, "DUMP", yellow);
-        m.Rect(truck, 8.5F, WorldBuilder.TruckBedWidth, new Color(0.95F, 0.8F, 0.15F));
-        m.Label(truck, "TRUCK", Color.black);
-        m.Line(line - F * 8F, line + F * 8F, new Color(0.05F, 0.05F, 0.05F));
-        m.Label(line + F * 9.6F, "LOW power line", new Color(0.85F, 0.85F, 0.85F));
-        m.Line(pit - Lf * 3.4F, pit + Lf * 3.4F, new Color(0.3F, 0.6F, 1F));
-        m.Label(pit + Lf * 4.6F, "pipe", new Color(0.4F, 0.7F, 1F));
-        m.Line(LS(0, 0), LS(W1.x, W1.y), cyan);
-        m.Line(LS(W1.x, W1.y), LS(W2.x, W2.y), cyan);
-        m.Line(LS(W2.x, W2.y), LS(WP.x, WP.y), cyan);
-        m.Label((LS(W1.x, W1.y) + LS(W2.x, W2.y)) / 2F + Lf * -2.6F, "lane", cyan);
-        for (int i = 0; i < 3; i++) m.Rect(LS(8F, -3.0F + i * 1.05F), 0.6F, 1.0F, grey);
-        m.Label(LS(9.6F, -2F), "blocks", grey);
-        m.Line(LS(8.5F, 9.6F), LS(12.5F, 9.6F), WorldBuilder.Orange);
-        m.Label(LS(10.5F, 11.3F), "fence", WorldBuilder.Orange);
-        foreach (var br in new[] { LS(2.5F, 3.4F), LS(4F, 5.1F), LS(16.5F, 8.6F) }) m.Dot(br, 0.4F, new Color(0.3F, 0.55F, 1F));
-        m.Label(LS(4F, 6.8F), "barrels", new Color(0.4F, 0.65F, 1F));
-        m.Label(dig + F * 7.5F + Lf * 6F, "\u2191 cab faces this way", Color.white);
+        m.Rect(pit, 4.5F, 4.5F, brownEdge, false);
+        m.Line(pit - Lf * 3.4F, pit + Lf * 3.4F, pipeCol);
+        foreach (float sg in new[] { -1F, 1F }) m.Dot(pit + Lf * sg * 2.9F, 0.35F, yellow);
+        m.Label(pit + F * 1.3F, "DIG PIT", Color.white);
 
-        m.AddLegend(MiniMap.Kind.Fill, brown, "PIT: dig the soil here (only inside it)");
-        m.AddLegend(MiniMap.Kind.Outline, yellow, "DIG box / DUMP box: where the machine stands to dig / to dump");
-        m.AddLegend(MiniMap.Kind.Fill, new Color(0.95F, 0.8F, 0.15F), "TRUCK: empty the bucket into its bed");
-        m.AddLegend(MiniMap.Kind.Line, cyan, "Lane: drive along it between the two boxes");
-        m.AddLegend(MiniMap.Kind.Line, new Color(0.3F, 0.6F, 1F), "Water PIPE under the pit, between the YELLOW posts - do not dig into it");
-        m.AddLegend(MiniMap.Kind.Line, new Color(0.05F, 0.05F, 0.05F), "LOW power line beyond the truck - keep the bucket away from it");
-        m.AddLegend(MiniMap.Kind.Fill, grey, "Concrete blocks, orange fence, blue barrels: obstacles - do not hit them");
+        // Lane with direction arrows (reverse from the DIG BOX to the DUMP BOX).
+        Vector3 p0 = LS(0, 0), p1 = LS(W1.x, W1.y), p2 = LS(W2.x, W2.y), p3 = LS(WP.x, WP.y);
+        m.Line(p0, p1, cyan); m.Line(p1, p2, cyan); m.Line(p2, p3, cyan);
+        Head(p0, p1, cyan); Head(p1, p2, cyan); Head(p2, p3, cyan);
+
+        // Boxes.
+        m.Rect(dig, 5.5F, 4.5F, yellow, false);
+        m.Rect(dump, 5.5F, 4.5F, yellow, false);
+        m.Label(dig + Lf * 5.0F, "DIG BOX\n(START)", yellow);
+        m.Label(dump - F * 1.7F, "DUMP BOX", yellow);
+
+        // Your machine at the start, arrow = cab direction (towards the pit).
+        m.Rect(dig - F * 0.3F, 3.0F, 2.2F, machine);
+        Arrow(dig + F * 1.2F, dig + F * 3.2F, machine, 0.8F);
+
+        // Truck, power line (above its far side), swing from the DUMP BOX to the truck.
+        m.Rect(truck, 8.5F, WorldBuilder.TruckBedWidth, truckCol);
+        m.Label(truck + Lf * 4.6F, "TRUCK", truckCol);
+        m.Line(line - F * 8F, line + F * 8F, wireCol);
+        Arrow(dump + Lf * 2.5F, truck - Lf * (WorldBuilder.TruckBedWidth / 2F + 0.4F) - F * 1F, swing);
+
+        // Obstacles.
+        for (int i = 0; i < 3; i++) m.Rect(LS(8F, -3.0F + i * 1.05F), 0.6F, 1.0F, grey);
+        m.Line(LS(8.5F, 9.6F), LS(12.5F, 9.6F), WorldBuilder.Orange);
+        foreach (var br in new[] { LS(2.5F, 3.4F), LS(4F, 5.1F), LS(16.5F, 8.6F) }) m.Dot(br, 0.4F, barrel);
+
+        m.AddLegend(MiniMap.Kind.Fill, machine, "Your machine at the START, in the DIG BOX (arrow = the cab faces the pit)");
+        m.AddLegend(MiniMap.Kind.Fill, brown, "DIG PIT: dig the soil here - only inside it");
+        m.AddLegend(MiniMap.Kind.Outline, yellow, "DIG BOX / DUMP BOX: where the machine stands to dig / to dump");
+        m.AddLegend(MiniMap.Kind.Line, cyan, "Lane: REVERSE along it to the DUMP BOX (arrows), drive forward to come back");
+        m.AddLegend(MiniMap.Kind.Line, swing, "At the DUMP BOX: swing the cab LEFT to the TRUCK and empty the bucket into it");
+        m.AddLegend(MiniMap.Kind.Line, pipeCol, "Water PIPE under the pit, between the two YELLOW posts - do not dig into it");
+        m.AddLegend(MiniMap.Kind.Line, wireCol, "LOW power line above the far side of the truck - keep the bucket away");
+        m.AddLegend(MiniMap.Kind.Dot, barrel, "Obstacles: blue barrels, grey concrete blocks, orange fence - do not hit them");
         return m;
     }
 
@@ -968,9 +1023,19 @@ public class DigDumpScenario : Scenario
         float t = SM.TrialTime;
         Vector3 c = M.SwingCenter;
 
+        bool loadedNow = load != null && load.IsLoaded;
+        if (loadedNow && !loadedBefore) CheckInBox("dig", "dig_box", WorldBuilder.OnGround(digPos), f, 5.5F, 4.5F);
+        loadedBefore = loadedNow;
+
         // Trips to the truck.
         bool nowAtDump = new Vector2(c.x - dumpPos.x, c.z - dumpPos.z).magnitude < 1.5F;
         if (nowAtDump && !atDump) { trips++; StudyLogger.Log("stage", "at_dump_box_" + trips); }
+        // Worker 2 is sent WHILE REVERSING to the DUMP box with the first load (DRIVE mode, within TruckWorkerTriggerDist
+        // of the box): he walks in from behind, between the box and the truck - visible in the left rear-view mirror -
+        // and stands in the swing path to the truck (fallback: truckWorkerAt). Same stage for every participant.
+        if (truckWorkerAt > 0F && loadedNow && Ctl.IsTravelMode && trips == 0
+            && new Vector2(c.x - dumpPos.x, c.z - dumpPos.z).magnitude < TruckWorkerTriggerDist)
+            truckWorkerAt = t;
         atDump = nowAtDump;
 
         // Worker 1: walks into the swing area at the pit (front-left of the DIG box), waits 5 s, walks out.
@@ -990,11 +1055,17 @@ public class DigDumpScenario : Scenario
         if (truckWorkerAt > 0F && t >= truckWorkerAt)
         {
             truckWorkerAt = -1F;
-            float off = Mathf.Max(2F, TruckOffset * reach - 2.2F);
-            Vector3 a = dumpPos + f * 7F + left * off, mid = dumpPos + left * off, b = dumpPos - f * 7F + left * off;
+            // Halfway between the DUMP box's left edge (2.25 m) and the truck's near side, i.e. in the swing path.
+            float boxEdge = 4.5F / 2F, truckNear = TruckOffset * reach - WorldBuilder.TruckBedWidth / 2F;
+            float off = Mathf.Max(2F, (boxEdge + truckNear) / 2F);
+            // From BEHIND the machine (beyond the DUMP box, -f) towards it, so he is seen in the left mirror while reversing.
+            // Afterwards he walks BACK the way he came and leaves (hidden at the end). Before, he walked on towards the
+            // lane (+f) and stopped there for good, right in the drive path back to the DIG box.
+            Vector3 a = dumpPos - f * 6F + left * off, mid = dumpPos + left * off, b = dumpPos - f * 16F + left * off;
             truckWorker.Appear(a);
-            truckWorker.WalkTo(mid, 5F);
+            truckWorker.WalkTo(mid, 8F);   // stands in the swing path for 8 s (was 5 s, and appeared only at 150-230 s)
             truckWorker.WalkTo(b);
+            truckWorker.HideAtEnd = true;
             StudyLogger.Log("event_start", "worker_in_swing_area_truck");
         }
     }

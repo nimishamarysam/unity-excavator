@@ -43,7 +43,9 @@ public class ContextViews : MonoBehaviour
     // A fixed camera straight above the trench, trench long side pointing up (like the bird's-eye view),
     // high enough to show the whole trench plus pitTopMargin around it. The buried pipe and cable are
     // drawn through the ground in this view (BuriedServicesXray).
-    public static bool PitTopViewInDigging = false;   // off: Digging uses the standard bird's-eye | view into bucket | bucket side view
+    // 2026-11-02: ON again, now in BOTH digging tasks (C2 and C3): the DIG PIT (TOP VIEW) replaces the bucket front view
+    // in operation mode. In C3 it carries the trench floor colours (TrenchGradeMap). false = previous layout.
+    public static bool PitTopViewInDigging = false;   // 2026-11-02: back OFF with the floor colours (bucket front view again)
     public float pitTopFieldOfView = 40F;
     public float pitTopMargin = 0.4F;   // metres shown beyond each end of the trench (was 1.2 m: closer view)
 
@@ -52,7 +54,8 @@ public class ContextViews : MonoBehaviour
         get
         {
             var sm = StudyManager.Instance;
-            return PitTopViewInDigging && sm != null && sm.CurrentTrial.scenario == StudyScenario.Moderate_Digging;
+            return PitTopViewInDigging && sm != null && (sm.CurrentTrial.scenario == StudyScenario.Moderate_Digging
+                                                          || sm.CurrentTrial.scenario == StudyScenario.Hard_DigAndDump);
         }
     }
 
@@ -349,6 +352,13 @@ public class ContextViews : MonoBehaviour
         if (v == ContextView.BucketSide && UndergroundSideView.Active)
             near = Mathf.Max(0.2F, Vector3.Dot(lookAt - w.cam.transform.position, w.cam.transform.forward) - cutAwaySlab);
         w.cam.nearClipPlane = near;
+        // Cut-away: ORTHOGRAPHIC (no perspective), so the bucket, the soil section and the buried pipe - which lie
+        // at different distances from the camera - are drawn at their TRUE depths relative to each other. With
+        // perspective the pipe ring (0.9 m further away) looked level with the bucket although it was 0.3-0.4 m
+        // deeper (2026-11-02). Same framing as the perspective view.
+        bool ortho = v == ContextView.BucketSide && UndergroundSideView.Active;
+        if (w.cam.orthographic != ortho) w.cam.orthographic = ortho;
+        if (ortho) w.cam.orthographicSize = Vector3.Distance(lookAt, w.cam.transform.position) * Mathf.Tan(w.cam.fieldOfView * 0.5F * Mathf.Deg2Rad);
     }
 
     // The view into the bucket is shown when the BUCKET angle (as on the measurement bar) is above

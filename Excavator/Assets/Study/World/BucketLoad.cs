@@ -124,7 +124,12 @@ public class BucketLoad : MonoBehaviour
                 Scoops++;
                 StudyLogger.Log("bucket_filled", $"scoop={Scoops};fill={Fill:F2}");
             }
-            else Fill = 0F;
+            else
+            {
+                // Too little soil to count as a scoop: it falls back (logged, so a "missing" load can be traced).
+                if (Fill > 0.01F) StudyLogger.Log("scoop_too_small", $"fill={Fill:F2};min={minScoop:F2}");
+                Fill = 0F;
+            }
         }
         wasInSoil = inSoil;
 
@@ -315,9 +320,15 @@ public class BucketLoad : MonoBehaviour
 
     const float BodyBoxShrink = 0.85F;   // bucket box (mesh bounds) scaled by this for the outside-digging check
 
-    bool BucketCornerOutside(TerrainDigger digger, out Vector3 corner)
+    bool BucketCornerOutside(TerrainDigger digger, out Vector3 corner) =>
+        BucketBodyOutside(machine, digger, outsideMargin, outsideDepth, out corner);
+
+    // Is any corner of the bucket box in the ground (deeper than 'depth') outside the dig area (+ 'margin')?
+    // Also used by SoilSideBlocker (a bucket that is partly outside may always be moved back).
+    public static bool BucketBodyOutside(Excavator machine, TerrainDigger digger, float margin, float depth, out Vector3 corner)
     {
         corner = Vector3.zero;
+        if (machine == null || digger == null) return false;
         var mc = machine.BucketMeshCollider;
         if (mc == null || mc.sharedMesh == null) return false;
         Bounds b = mc.sharedMesh.bounds;
@@ -327,8 +338,8 @@ public class BucketLoad : MonoBehaviour
         {
             Vector3 local = b.center + new Vector3((i & 1) == 0 ? -e.x : e.x, (i & 2) == 0 ? -e.y : e.y, (i & 4) == 0 ? -e.z : e.z);
             Vector3 w = t.TransformPoint(local);
-            float depth = TerrainDigger.ReferenceGroundHeight(w) - w.y;
-            if (depth > outsideDepth && !digger.Contains(w, outsideMargin)) { corner = w; return true; }
+            float d = TerrainDigger.ReferenceGroundHeight(w) - w.y;
+            if (d > depth && !digger.Contains(w, margin)) { corner = w; return true; }
         }
         return false;
     }

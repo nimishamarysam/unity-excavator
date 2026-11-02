@@ -6,7 +6,7 @@ using UnityEngine;
 //
 // Cue 3 - dig area
 //   - Bright outline over the boundary of the pit / trench (drawn on the original ground).
-//     Cyan normally; orange/red when the tracks come close to the trench edge (trench_edge hazard)
+//     Cyan normally; red (pulsing) only while the bucket cuts outside the dig area
 //     or blinking red when the teeth cut outside the marked area.
 //   - TEETH LINE (driver view only): a bold horizontal line as wide as the cutting edge, with a dark outline,
 //     lying on the ground straight below the teeth (on the trench floor when digging). (Not drawn in the
@@ -14,7 +14,7 @@ using UnityEngine;
 //         green  = inside the area, more soil to remove here
 //         white  = target depth reached here (thicker line)
 //         red    = deeper than the target (over-dig) or close to the buried cable
-//         orange = outside the marked area
+//         red    = only the PART of the line outside the marked area (the rest keeps its colour); shown while any part is over the area
 //
 // Cue 5 - bucket trajectory
 //   Suggested path of the teeth for the NEXT scoop, drawn on top of everything (also below the
@@ -62,12 +62,14 @@ public class DiggingCues : MonoBehaviour
     BucketLoad load;
 
     LineRenderer boundary, ring, ring2, cross, drop;
-    LineRenderer teethLine, teethBack;
+    LineRenderer teethLine, teethBack, teethOutA, teethOutB;   // OutA/B: the parts of the edge OUTSIDE the dig area (red)
+    LineRenderer cutBack;   // dark outline of the bucket path
     Renderer edgeRenderer;
     LineRenderer approach, cut, entryRing;
     readonly List<LineRenderer> arrows = new List<LineRenderer>();
     LineRenderer heightArrow, targetTick;
     ScreenBox heightText, heightTextDriver, angleText;
+    bool gaugeOver;
     DepthGauge depthGauge;   // driver view: fixed depth gauge instead of the floating depth text
     // Ideal curl keyframes: index into cutPts and angle of the teeth->pivot line from vertical,
     // tipped towards "out" (away from the machine). 20 = bucket upright, 105 = fully curled.
@@ -100,10 +102,16 @@ public class DiggingCues : MonoBehaviour
         teethBack   = CueKit.Line(w, "CueTeethLineOutline", 0.24F, true, true, CueKit.DriverOnlyLayer);   // flat on the ground
         teethLine   = CueKit.Line(w, "CueTeethLine", 0.15F, true, true, CueKit.DriverOnlyLayer);
         teethBack.sortingOrder = -1;
+        teethOutA   = CueKit.Line(w, "CueTeethLineOutsideA", 0.15F, true, true, CueKit.DriverOnlyLayer);
+        teethOutB   = CueKit.Line(w, "CueTeethLineOutsideB", 0.15F, true, true, CueKit.DriverOnlyLayer);
         int side = CueKit.BucketSideOnlyLayer;
         int trajLayer = r.Profile.trajectoryInBucketSideViewOnly ? side : 0;
         approach  = CueKit.Line(w, "CueTrajApproach", 0.035F, true, false, trajLayer);
-        cut       = CueKit.Line(w, "CueTrajCut", 0.09F, true, false, trajLayer);
+        // Dark outline under the path (2026-11-02): the cyan/white path disappeared on the sand-coloured "still to dig"
+        // block of the cut-away. Wider, near-black line drawn first, the path on top.
+        cutBack   = CueKit.Line(w, "CueTrajCutOutline", 0.2F, true, false, trajLayer);
+        cutBack.sortingOrder = -1;
+        cut       = CueKit.Line(w, "CueTrajCut", 0.12F, true, false, trajLayer);   // was 0.09
         cutDone   = CueKit.Line(w, "CueTrajDone", 0.05F, true, false, trajLayer);
         hereDot   = CueKit.Line(w, "CueTrajHere", 0.045F, true, false, trajLayer);
         entryRing = CueKit.Line(w, "CueTrajEntry", 0.06F, true, true, trajLayer);
@@ -160,9 +168,21 @@ public class DiggingCues : MonoBehaviour
 
         // Trench task: no height arrow over the spoil square (only over the truck in dig and dump).
         bool overDump = OverDumpArea() && !(root.Scenario is DiggingScenario);
-        if (op && root.Profile.bucketSideHeightArrow && ContextViews.BucketSideCamera != null && (BucketInDigArea() || overDump))
+        // No depth arrow / "x m deep" label while the teeth are in the ground (below the original surface) - the cut-away
+        // already shows the depth against the target line (2026-11-02). Shown again when the bucket is above the ground.
+        Vector3 tipH = root.M.BucketTipPosition;
+        bool teethInGround = tipH.y < TerrainDigger.ReferenceGroundHeight(tipH);
+        if (op && root.Profile.bucketSideHeightArrow && ContextViews.BucketSideCamera != null && (BucketInDigArea() || overDump) && !teethInGround)
             DrawHeightArrow(overDump && !BucketInDigArea());
         else HideHeightArrow();
+
+        // Driver-view depth gauge: on while the teeth are over the dig pit (also while they are in the ground), off
+        // when the bucket is swung away from it - same rule as the DIG VOLUME panel: on within 0.3 m of the area,
+        // off beyond 0.8 m, so it does not blink at the edge (2026-11-02).
+        gaugeOver = Digger != null && Digger.HasZone && Digger.Contains(tipH, gaugeOver ? 0.8F : 0.3F);
+        if (op && root.Profile.heightArrowInDriverView && root.M.OperatorCamera != null && gaugeOver)
+            PlaceDepthGauge(root.M.OperatorCamera, TerrainDigger.ReferenceGroundHeight(tipH) - tipH.y);
+        else depthGauge.Hide();
     }
 
     // ---------- bucket side view: height / depth arrow ----------
@@ -272,19 +292,25 @@ public class DiggingCues : MonoBehaviour
             ? $"{dNow:0.00} m deep (target {TargetDepth:0.00})" + (dNow > TargetDepth + overDigTolerance ? $"  {dNow - TargetDepth:0.00} m TOO DEEP" : "")
             : txt.Replace("\n", "  ");
         // Driver view: digging -> the fixed depth gauge (the floating text covered the pit); over the dump area -> short text.
-        if (root.Profile.heightArrowInDriverView && !overDump && m.OperatorCamera != null)
-        {
-            HideText(heightTextDriver);
-            PlaceDepthGauge(m.OperatorCamera, refY - tip.y);
-        }
-        else if (root.Profile.heightArrowInDriverView) { depthGauge.Hide(); PlaceText(heightTextDriver, m.OperatorCamera, (top + bottom) / 2F, driverTxt, c); }
-        else { depthGauge.Hide(); HideText(heightTextDriver); }
+        // Driver view: the depth gauge is handled in LateUpdate (always on); over the dump area -> short text.
+        if (root.Profile.heightArrowInDriverView && overDump && m.OperatorCamera != null)
+            PlaceText(heightTextDriver, m.OperatorCamera, (top + bottom) / 2F, driverTxt, c);
+        else HideText(heightTextDriver);
     }
 
     // Depth gauge beside the dig area: its top-right corner just left of the area's far-left corner (as the
     // operator sees it), kept inside the driver view. Fixed to the trench, so it does not move with the arm.
     void PlaceDepthGauge(Camera cam, float depth)
     {
+        // 2026-11-02: fixed, right next to the DIG VOLUME panel (to its right, top-aligned), even while the
+        // panel itself is hidden. Room on the left of the gauge for its target value.
+        if (DigVolumeGrid.Enabled && DigVolumeGrid.InDriverView && !DigVolumeGrid.FollowPit)
+        {
+            Rect pr = DigVolumeGrid.BesideArm && DigVolumeGrid.CurrentRect.width > 0F ? DigVolumeGrid.CurrentRect : DigVolumeGrid.FixedRect();
+            float pxs = 1F / Mathf.Max(1F, Screen.width);
+            depthGauge.ShowAt(new Vector2(pr.xMax + 40F * pxs, pr.yMax), new Vector2(0F, 1F), depth, TargetDepth, atGradeBelow, overDigTolerance);
+            return;
+        }
         var d = Digger;
         Vector3 c = CueKit.Flat(d.ZoneCenter), u = d.ZoneAxisU;
         Vector3 fwd = Vector3.Dot(CueKit.Flat(root.M.SwingCenter) - c, u) > 0F ? -u : u;
@@ -310,7 +336,6 @@ public class DiggingCues : MonoBehaviour
         CueKit.Hide(targetTick);
         HideText(heightText);
         HideText(heightTextDriver);
-        if (depthGauge != null) depthGauge.Hide();
     }
 
     // ---------- small world-space text (drawn on top, facing the given camera) ----------
@@ -362,11 +387,10 @@ public class DiggingCues : MonoBehaviour
         Vector3 tip = m.BucketTipPosition;
         float refY = TerrainDigger.ReferenceGroundHeight(tip);
         bool cuttingOutside = refY - tip.y > 0.1F && !d.Contains(tip, 0.3F);
-        Hazard edge = Find(HazardKind.TrenchEdge);
         Color bc = CueKit.Guide;
+        // 2026-11-02: the outline stays cyan; it turns red only while the bucket digs outside the area. The orange
+        // "tracks near the trench edge" warning colour is gone (it looked like the orange cable marking).
         if (cuttingOutside) bc = CueKit.Alpha(CueKit.Danger, CueKit.Pulse(10F, 0.5F));
-        else if (edge != null && edge.CurrentLevel == Hazard.Level.Contact) bc = CueKit.Alpha(CueKit.Danger, CueKit.Pulse(10F, 0.6F));
-        else if (edge != null && edge.CurrentLevel == Hazard.Level.Warning) bc = CueKit.Alpha(CueKit.Warn, CueKit.Pulse(6F, 0.5F));
         CueKit.Paint(boundary, bc);
 
         // Loaded bucket near the dump area (truck bed / spoil square): dump marker instead of the dig marker.
@@ -383,7 +407,21 @@ public class DiggingCues : MonoBehaviour
             if (tipState != "hidden") { tipState = "hidden"; StudyLogger.Log("cue_teeth_marker", $"hidden;bucket_angle={m.bucketAngle:F0}"); }
             return;
         }
-        if (loaded || !d.Contains(tip, 1.5F))
+        // Teeth line only while (part of) the cutting edge is OVER the dig area - not beside it. The part of the
+        // edge that is outside the area is drawn RED, only that length (2026-11-02).
+        Vector3 fwdT = CueKit.Flat(tip - m.SwingCenter).normalized, sdT = Vector3.Cross(Vector3.up, fwdT);
+        Vector3 ecT = EdgeCentre(m, sdT, out float hwT);
+        // Inside interval [inA, inB] of the edge (-1 = left end, +1 = right end); the area is a rectangle, so the
+        // inside part is one piece. Sampled every ~2 cm.
+        const int N = 60;
+        float inA = 2F, inB = -2F;
+        for (int k = 0; k <= N; k++)
+        {
+            float t = -1F + 2F * k / N;
+            if (d.Contains(ecT + sdT * (hwT * t), 0F)) { inA = Mathf.Min(inA, t); inB = Mathf.Max(inB, t); }
+        }
+        bool overArea = inB >= inA;
+        if (loaded || !overArea)
         {
             CueKit.Hide(drop); HideTeeth();
             if (tipState != "off") { tipState = "off"; StudyLogger.Log("cue_teeth_marker", "off"); }
@@ -394,16 +432,21 @@ public class DiggingCues : MonoBehaviour
         Vector3 g = new Vector3(tip.x, Mathf.Min(groundY, tip.y) + 0.04F, tip.z);
         float depthHere = refY - Mathf.Min(tip.y, groundY);   // how deep the ground (or the teeth) is at this spot
         float target = TargetDepth;
-        bool inside = d.Contains(tip, 0.1F);
+        // Inside only when the WHOLE cutting edge is inside the dig area (2026-11-02: was the teeth centre + 0.1 m,
+        // so the line stayed green while one end of it was already outside).
+        Vector3 fwd0 = CueKit.Flat(tip - m.SwingCenter).normalized, sd0 = Vector3.Cross(Vector3.up, fwd0);
+        Vector3 ec0 = EdgeCentre(m, sd0, out float hw0);
+        bool inside = d.Contains(ec0 - sd0 * hw0, 0F) && d.Contains(ec0 + sd0 * hw0, 0F);
+        bool partly = !inside;   // part of the edge outside: that part red, the rest coloured as usual
         bool nearCable = Near(HazardKind.BuriedCable) || Near(HazardKind.BuriedPipe);
 
         string state; Color col; bool atGrade = false;
         if (nearCable) { state = "near_cable"; col = CueKit.Alpha(CueKit.Danger, CueKit.Pulse(10F, 0.5F)); }
-        else if (!inside) { state = "outside"; col = CueKit.Warn; }
         else if (depthHere > target + overDigTolerance) { state = "over_dig"; col = CueKit.Alpha(CueKit.Danger, CueKit.Pulse(8F, 0.5F)); }
         else if (depthHere >= target - atGradeBelow) { state = "at_grade"; col = CueKit.Bright; atGrade = true; }
         else { state = "dig_here"; col = CueKit.Good; }
-        if (state != tipState) { tipState = state; StudyLogger.Log("cue_teeth_marker", $"{state};depth={depthHere:F2}"); }
+        string logState = partly ? state + "+part_outside" : state;
+        if (logState != tipState) { tipState = logState; StudyLogger.Log("cue_teeth_marker", $"{logState};depth={depthHere:F2};inside={inA:F2}..{inB:F2}"); }
 
         // Teeth line: a bold line as wide as the cutting edge (no drop line).
         Vector3 f = CueKit.Flat(tip - m.SwingCenter).normalized, s = Vector3.Cross(Vector3.up, f);
@@ -413,7 +456,12 @@ public class DiggingCues : MonoBehaviour
         // i.e. at the teeth when they are cutting), like the earlier ring + cross target symbol.
         Vector3 gl = new Vector3(ec.x, Mathf.Min(TerrainDigger.CurrentGroundHeight(ec), ec.y) + 0.04F, ec.z);
         SetSeg(teethBack, gl - s * (hw + 0.06F), gl + s * (hw + 0.06F), new Color(0F, 0F, 0F, 0.85F), 0.26F * wk);
-        SetSeg(teethLine, gl - s * hw, gl + s * hw, col, 0.16F * wk);
+        // Same edge as the inside test (fwdT/sdT/ecT/hwT) so the red part matches the outside length.
+        Vector3 glT = new Vector3(ecT.x, gl.y, ecT.z);
+        SetSeg(teethLine, glT + sdT * (hwT * inA), glT + sdT * (hwT * inB), col, 0.16F * wk);
+        Color outCol = CueKit.Danger;
+        if (inA > -1F) SetSeg(teethOutA, glT - sdT * hwT, glT + sdT * (hwT * inA), outCol, 0.16F * wk); else CueKit.Hide(teethOutA);
+        if (inB < 1F)  SetSeg(teethOutB, glT + sdT * (hwT * inB), glT + sdT * hwT, outCol, 0.16F * wk); else CueKit.Hide(teethOutB);
         CueKit.Hide(drop);
     }
 
@@ -428,7 +476,7 @@ public class DiggingCues : MonoBehaviour
         CueKit.Paint(lr, c);
     }
 
-    void HideTeeth() { CueKit.Hide(teethLine); CueKit.Hide(teethBack); }
+    void HideTeeth() { CueKit.Hide(teethLine); CueKit.Hide(teethBack); CueKit.Hide(teethOutA); CueKit.Hide(teethOutB); }
 
     // Centre and half width of the bucket's cutting edge along the lateral direction s (from the edge mesh).
     Vector3 EdgeCentre(Excavator m, Vector3 s, out float halfWidth)
@@ -700,6 +748,10 @@ public class DiggingCues : MonoBehaviour
         cut.loop = false;
         cut.positionCount = ahead.Count;
         cut.SetPositions(ahead.ToArray());
+        cutBack.loop = false;
+        cutBack.positionCount = ahead.Count;
+        cutBack.SetPositions(ahead.ToArray());
+        CueKit.Paint(cutBack, new Color(0.02F, 0.03F, 0.05F, 0.9F));
         Color head = off ? CueKit.Warn : CueKit.Guide;
         var g = new Gradient();
         g.SetKeys(new[] { new GradientColorKey(head, 0F), new GradientColorKey(off ? CueKit.Warn : CueKit.Bright, 1F) },
@@ -748,7 +800,7 @@ public class DiggingCues : MonoBehaviour
             Vector3 dir = (cutPts[i] - cutPts[i - 1]).normalized;
             var lr = arrows[used++];
             CueKit.Chevron(lr, p, dir, lateral, 0.22F, 0.2F);
-            CueKit.Paint(lr, CueKit.Alpha(CueKit.Bright, 0.9F));
+            CueKit.Paint(lr, new Color(0.02F, 0.15F, 0.25F, 0.95F));   // dark chevrons on the bright path (were white)
         }
         for (int i = used; i < arrows.Count; i++) CueKit.Hide(arrows[i]);
 
@@ -813,6 +865,7 @@ public class DiggingCues : MonoBehaviour
 
     void HideTrajectory()
     {
+        CueKit.Hide(cutBack);
         CueKit.Hide(cut); CueKit.Hide(approach); CueKit.Hide(entryRing);
         CueKit.Hide(cutDone); CueKit.Hide(hereDot);
         if (offPath) { offPath = false; StudyLogger.Log("cue_trajectory_offpath", "off"); }

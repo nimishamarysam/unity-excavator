@@ -67,12 +67,14 @@ public class IncidentFeedback : MonoBehaviour
                 if (!detail.Contains("impact=1")) return null;
                 int i = detail.IndexOf("part=");
                 string part = i >= 0 ? detail.Substring(i + 5).Split(';')[0] : "truck";
+                if (part == "power_line") return null;   // counted by the power-line hazard contact instead
                 return "truck_hit_" + part;
             }
             case "spill": return detail.StartsWith("too_close") ? "spill_too_close" : "spill";
             case "over_dig": return "over_dig";
             case "cut_outside_zone": return "dig_outside_area";
             case "bucket_over_worker": return "bucket_over_worker";
+            case "not_in_box": return detail.StartsWith("dig") ? "dig_not_in_box" : "dump_not_in_box";
             default: return null;
         }
     }
@@ -117,6 +119,8 @@ public class IncidentFeedback : MonoBehaviour
             case "over_dig": return "Dug too deep";
             case "dig_outside_area": return "Digging outside the area";
             case "bucket_over_worker": return "Bucket over a worker";
+            case "dig_not_in_box": return "Dug from outside the marked box";
+            case "dump_not_in_box": return "Dumped from outside the marked box";
             default: return type.Replace('_', ' ');
         }
     }

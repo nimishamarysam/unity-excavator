@@ -19,10 +19,28 @@ using UnityEngine;
 // Everything is on BucketSideOnlyLayer, so the driver view and other windows are not affected.
 // It switches on when the teeth are inside the dig area and below the original ground (+0.3 m),
 // and off again when they are 0.8 m above the original ground or leave the area.
+//
+// 2026-11-01 - READABLE ZONES (all soil used to look the same):
+//   C2 and C3: soil OUTSIDE the dig area is dark brown ("do not dig"), soil inside it lighter brown; the dug-out
+//              part is a clearly empty dark gap with a bright current-ground line; the trench WALLS are dashed white
+//              vertical lines (from the original ground downwards).
+//   STABLE PROFILE (2026-11-02): inside the dig area the section no longer shows the one thin strip under the bucket
+//              (it changed shape with every small swing). For each point along the section it looks ACROSS THE
+//              WHOLE DIG AREA (sideways): the soil surface drawn = the HIGHEST soil left anywhere across (so "empty"
+//              really means dug out across the full width), the bright line = the DEEPEST point dug, and the band
+//              between them (partly dug) is semi-transparent.
+//   C3 only:   the soil STILL TO DIG (inside the area, above the target depth) is a striped sand colour that shrinks
+//              as it is dug, the TARGET DEPTH is a bold green line, and soil removed below the target is red.
 // ---------------------------------------------------------------------------
 
 public class UndergroundSideView : MonoBehaviour
 {
+    // 2026-11-02 SIMPLE TRUE SECTION (the colour-coded version was confusing): the section is the ground straight
+    // under the bucket (no looking across the trench), one soil colour, the dug part left open (no dark gap, no
+    // see-through band), the current ground line, the original ground line, the dashed trench walls and - C3 only -
+    // the target-depth line. "Where is still soil to dig" is shown by the trench floor colours in the pit top view
+    // (TrenchGradeMap) instead. false = the previous colour-coded section.
+    public static bool SimpleSection = true;
     public static bool Active { get; private set; }
 
     public float halfSpan = 5F;          // section length on each side of the bucket (m)
@@ -36,6 +54,7 @@ public class UndergroundSideView : MonoBehaviour
     GameObject sectionGo;
     Mesh mesh;
     LineRenderer refLine, curLine, targetLine;
+    readonly List<LineRenderer> wallDashes = new List<LineRenderer>();   // trench walls (dashed vertical lines)
     readonly List<LineRenderer> serviceRings = new List<LineRenderer>();
     readonly List<ScreenBox> serviceLabels = new List<ScreenBox>();
     readonly List<Terrain> hidden = new List<Terrain>();
@@ -73,7 +92,7 @@ public class UndergroundSideView : MonoBehaviour
 
         refLine    = CueKit.Line(own, "CueSectionOriginalGround", 0.04F, true, false, layer);
         curLine    = CueKit.Line(own, "CueSectionGround", 0.05F, true, false, layer);
-        targetLine = CueKit.Line(own, "CueSectionTarget", 0.04F, true, false, layer);
+        targetLine = CueKit.Line(own, "CueSectionTarget", 0.08F, true, false, layer);   // bold (was 0.04)
         Camera.onPreCull += PreCull;
         Camera.onPostRender += PostRender;
     }
@@ -138,6 +157,7 @@ public class UndergroundSideView : MonoBehaviour
     {
         sectionGo.SetActive(false);
         CueKit.Hide(refLine); CueKit.Hide(curLine); CueKit.Hide(targetLine);
+        foreach (var d in wallDashes) CueKit.Hide(d);
         foreach (var r in serviceRings) CueKit.Hide(r);
         foreach (var l in serviceLabels) l.Hide();
     }
@@ -155,10 +175,14 @@ public class UndergroundSideView : MonoBehaviour
         var verts = new List<Vector3>(N * 4 + 8);
         var cols = new List<Color>(N * 4 + 8);
         var tris = new List<int>(N * 12);
-        Color soilTop = new Color(0.55F, 0.4F, 0.26F, 0.95F), soilDeep = new Color(0.3F, 0.21F, 0.13F, 0.95F);
-        Color gap = new Color(0.08F, 0.07F, 0.06F, 0.55F);
+        // Inside the dig area: lighter soil; outside ("do not dig"): darker soil. Dug-out part: clearly empty, dark.
+        Color soilTop = new Color(0.58F, 0.43F, 0.28F, 0.97F), soilDeep = new Color(0.42F, 0.3F, 0.19F, 0.97F);
+        Color outTop = new Color(0.3F, 0.21F, 0.13F, 0.97F), outDeep = new Color(0.2F, 0.14F, 0.09F, 0.97F);
+        Color gap = new Color(0.06F, 0.07F, 0.09F, 0.85F);
+        var inZone = new bool[N + 1];
         var refPts = new Vector3[N + 1];
-        var curPts = new Vector3[N + 1];
+        var curPts = new Vector3[N + 1];    // highest soil left across the dig area (= top of the remaining soil)
+        var deepPts = new Vector3[N + 1];   // deepest point dug across the dig area
         float baseY = float.MaxValue;
         for (int i = 0; i <= N; i++)
         {
@@ -169,19 +193,48 @@ public class UndergroundSideView : MonoBehaviour
             Vector3 ps = p - side * behindBucket;
             float ry = TerrainDigger.ReferenceGroundHeight(ps), cy = Mathf.Min(TerrainDigger.CurrentGroundHeight(ps), ry);
             refPts[i] = new Vector3(p.x, ry, p.z);
-            curPts[i] = new Vector3(p.x, cy, p.z);
+            inZone[i] = Digger.Contains(ps, 0F);
+            float hi = cy, lo = cy;
+            if (inZone[i] && !SimpleSection)
+            {
+                // Look sideways across the whole dig area at this distance.
+                hi = float.MinValue; lo = float.MaxValue;
+                for (float off = -4F; off <= 4F; off += 0.2F)
+                {
+                    Vector3 q = ps + side * off;
+                    if (!Digger.Contains(q, 0F)) continue;
+                    float qr = TerrainDigger.ReferenceGroundHeight(q);
+                    float depthQ = qr - Mathf.Min(TerrainDigger.CurrentGroundHeight(q), qr);   // dug depth there
+                    float yQ = ry - depthQ;                                                     // drawn on this profile
+                    hi = Mathf.Max(hi, yQ); lo = Mathf.Min(lo, yQ);
+                }
+                if (hi == float.MinValue) { hi = lo = cy; }
+            }
+            curPts[i] = new Vector3(p.x, hi, p.z);
+            deepPts[i] = new Vector3(p.x, lo, p.z);
             baseY = Mathf.Min(baseY, ry - sectionDepth);
         }
         for (int i = 0; i < N; i++)
         {
             // soil: from the current ground down to the section base (two-colour gradient)
             int v = verts.Count;
-            verts.Add(curPts[i]); verts.Add(curPts[i + 1]);
-            verts.Add(new Vector3(curPts[i].x, baseY, curPts[i].z)); verts.Add(new Vector3(curPts[i + 1].x, baseY, curPts[i + 1].z));
-            cols.Add(soilTop); cols.Add(soilTop); cols.Add(soilDeep); cols.Add(soilDeep);
+            verts.Add(deepPts[i]); verts.Add(deepPts[i + 1]);
+            verts.Add(new Vector3(deepPts[i].x, baseY, deepPts[i].z)); verts.Add(new Vector3(deepPts[i + 1].x, baseY, deepPts[i + 1].z));
+            bool zoneSeg = SimpleSection || (inZone[i] && inZone[i + 1]);
+            Color ct = zoneSeg ? soilTop : outTop, cb = zoneSeg ? soilDeep : outDeep;
+            cols.Add(ct); cols.Add(ct); cols.Add(cb); cols.Add(cb);
             tris.AddRange(new[] { v, v + 1, v + 2, v + 1, v + 3, v + 2 });
-            // dug-out part of the trench: dark gap between the current and the original ground
-            if (refPts[i].y - curPts[i].y > 0.02F || refPts[i + 1].y - curPts[i + 1].y > 0.02F)
+            // partly dug (dug somewhere across the area, soil left elsewhere): semi-transparent soil
+            if (curPts[i].y - deepPts[i].y > 0.02F || curPts[i + 1].y - deepPts[i + 1].y > 0.02F)
+            {
+                v = verts.Count;
+                verts.Add(curPts[i]); verts.Add(curPts[i + 1]); verts.Add(deepPts[i]); verts.Add(deepPts[i + 1]);
+                Color part = new Color(soilTop.r, soilTop.g, soilTop.b, 0.4F);
+                cols.Add(part); cols.Add(part); cols.Add(part); cols.Add(part);
+                tris.AddRange(new[] { v, v + 1, v + 2, v + 1, v + 3, v + 2 });
+            }
+            // dug-out part of the trench (across the full width): dark gap between the remaining soil and the original ground
+            if (!SimpleSection && (refPts[i].y - curPts[i].y > 0.02F || refPts[i + 1].y - curPts[i + 1].y > 0.02F))
             {
                 v = verts.Count;
                 verts.Add(refPts[i]); verts.Add(refPts[i + 1]); verts.Add(curPts[i]); verts.Add(curPts[i + 1]);
@@ -192,11 +245,12 @@ public class UndergroundSideView : MonoBehaviour
         // C3: SOIL STILL TO DIG (like the "cut" of a grade-control system). Inside the dig area, the band between
         // the current ground and the target depth is filled cyan (more opaque = deeper still to go), and soil
         // removed below the target (over-dig) is filled red. Drawn last, so it lies over the soil and the gap.
-        if (Guidance)
+        if (Guidance && !SimpleSection)
         {
             float tgtDepth = TargetDepth;
-            Color toDigTop = CueKit.Alpha(CueKit.Guide, 0.35F), toDigBottom = CueKit.Alpha(CueKit.Guide, 0.7F);
-            Color overDig = CueKit.Alpha(CueKit.Danger, 0.6F);
+            // Striped sand colour = "soil still to dig" (alternating stripes so it reads as a marked block).
+            Color sandA = new Color(0.97F, 0.84F, 0.52F, 0.95F), sandB = new Color(0.86F, 0.71F, 0.4F, 0.95F);
+            Color overDig = CueKit.Alpha(CueKit.Danger, 0.8F);
             Vector3 front = -side * 0.01F;   // a hair towards the camera, so it is not hidden in the soil quad
             for (int i = 0; i < N; i++)
             {
@@ -210,16 +264,18 @@ public class UndergroundSideView : MonoBehaviour
                     verts.Add(new Vector3(curPts[i + 1].x, Mathf.Max(c1, t1), curPts[i + 1].z) + front);
                     verts.Add(new Vector3(curPts[i].x, t0, curPts[i].z) + front);
                     verts.Add(new Vector3(curPts[i + 1].x, t1, curPts[i + 1].z) + front);
-                    cols.Add(toDigTop); cols.Add(toDigTop); cols.Add(toDigBottom); cols.Add(toDigBottom);
+                    Color sc = (i / 2) % 2 == 0 ? sandA : sandB;
+                    cols.Add(sc); cols.Add(sc); cols.Add(sc); cols.Add(sc);
                     tris.AddRange(new[] { v, v + 1, v + 2, v + 1, v + 3, v + 2 });
                 }
-                if (c0 < t0 - overDigShow || c1 < t1 - overDigShow)   // dug below the target
+                float e0 = deepPts[i].y, e1 = deepPts[i + 1].y;
+                if (e0 < t0 - overDigShow || e1 < t1 - overDigShow)   // dug below the target (deepest point)
                 {
                     int v = verts.Count;
                     verts.Add(new Vector3(curPts[i].x, t0, curPts[i].z) + front);
                     verts.Add(new Vector3(curPts[i + 1].x, t1, curPts[i + 1].z) + front);
-                    verts.Add(new Vector3(curPts[i].x, Mathf.Min(c0, t0), curPts[i].z) + front);
-                    verts.Add(new Vector3(curPts[i + 1].x, Mathf.Min(c1, t1), curPts[i + 1].z) + front);
+                    verts.Add(new Vector3(curPts[i].x, Mathf.Min(e0, t0), curPts[i].z) + front);
+                    verts.Add(new Vector3(curPts[i + 1].x, Mathf.Min(e1, t1), curPts[i + 1].z) + front);
                     cols.Add(overDig); cols.Add(overDig); cols.Add(overDig); cols.Add(overDig);
                     tris.AddRange(new[] { v, v + 1, v + 2, v + 1, v + 3, v + 2 });
                 }
@@ -235,7 +291,26 @@ public class UndergroundSideView : MonoBehaviour
 
         // --- lines: original ground (white), current ground (light brown), target depth inside the dig area (green) ---
         SetLine(refLine, refPts, new Color(1F, 1F, 1F, 0.75F));
-        SetLine(curLine, curPts, new Color(0.95F, 0.75F, 0.5F));
+        SetLine(curLine, deepPts, new Color(1F, 0.85F, 0.6F));   // bright line = bottom of the hole (deepest dug)
+
+        // --- trench walls: dashed white vertical lines where the dig area starts / ends in this section ---
+        int nd = 0;
+        float wallDown = Guidance ? TargetDepth + 0.4F : 2.2F;   // C2: no hint of the target depth in the wall length
+        for (int i = 0; i < N; i++)
+        {
+            if (inZone[i] == inZone[i + 1]) continue;
+            Vector3 top = (refPts[i] + refPts[i + 1]) / 2F - side * 0.02F;
+            for (float d = 0F; d < wallDown; d += 0.25F)
+            {
+                while (wallDashes.Count <= nd) wallDashes.Add(CueKit.Line(own, "CueSectionWall", 0.04F, true, false, CueKit.BucketSideOnlyLayer));
+                var dl = wallDashes[nd++];
+                dl.loop = false; dl.positionCount = 2;
+                dl.SetPosition(0, top + Vector3.down * d);
+                dl.SetPosition(1, top + Vector3.down * Mathf.Min(wallDown, d + 0.14F));
+                CueKit.Paint(dl, new Color(1F, 1F, 1F, 0.85F));
+            }
+        }
+        for (int i = nd; i < wallDashes.Count; i++) CueKit.Hide(wallDashes[i]);
         var tgt = new List<Vector3>();
         float target = TargetDepth;
         foreach (var p in refPts)

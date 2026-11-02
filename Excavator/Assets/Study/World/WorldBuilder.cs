@@ -170,29 +170,83 @@ public static class WorldBuilder
 
     public static Vector3 Truck(Transform parent, string name, Vector3 center, Vector3 forward, out Bounds bedArea)
     {
+        // 2026-11-02: looks like a real dump truck (wheels, cab with windows, grille, bumper, lights, mirrors, exhaust,
+        // fuel tank, bed rim and cab guard). The SOLID parts (colliders, BucketBlocker) are still the simple boxes:
+        // chassis, cab, bed floor and the four bed walls; everything else is decoration without colliders.
         forward = new Vector3(forward.x, 0, forward.z).normalized;
         Vector3 side = Vector3.Cross(Vector3.up, forward);
         float yaw = Quaternion.LookRotation(forward).eulerAngles.y;
+        Quaternion q = Quaternion.Euler(0F, yaw, 0F);
         float bedLen = TruckBedLength, bedW = TruckBedWidth, floor = 1.3F, wall = 1.1F;
         float bodyW = bedW - 0.1F;   // chassis and cab as wide as the bed
+        Color tire = new Color(0.07F, 0.07F, 0.07F), rim = new Color(0.55F, 0.55F, 0.57F), glass = new Color(0.22F, 0.32F, 0.42F),
+              dark = new Color(0.15F, 0.15F, 0.16F), bedRim = new Color(0.2F, 0.22F, 0.25F), light = new Color(1F, 0.97F, 0.85F),
+              rearLight = new Color(0.85F, 0.1F, 0.08F), frame = new Color(0.25F, 0.25F, 0.27F);
+        // 2026-11-02: truck no longer yellow (it looked like the excavator): white cab, dark steel-grey bed.
+        Color cabCol = new Color(0.93F, 0.94F, 0.95F), bedCol = new Color(0.34F, 0.37F, 0.41F);
+        Vector3 At(float fwd, float sd, float up) => OnGround(center + forward * fwd + side * sd, up);
 
-        var chassis = Shape(PrimitiveType.Cube, parent, name + "_chassis", center, new Vector3(bodyW, 0.9F, 8.5F), Grey, yaw, true, 0.75F);
+        // --- solid parts ---
+        var chassis = Shape(PrimitiveType.Cube, parent, name + "_chassis", center - forward * 0.4F, new Vector3(bodyW - 0.4F, 0.5F, 7.6F), frame, yaw, true, 0.95F);
         AddHazard<ColliderHazard>(chassis, name, HazardKind.Truck, 0.8F, 0.1F);   // small warning distance: dumping over the bed is normal
-        var cab = Shape(PrimitiveType.Cube, parent, name + "_cab", center + forward * 3F, new Vector3(bodyW, 2.2F, 2F), Yellow, yaw, true, 2.3F);
-        Vector3 bedC = center - forward * 1.5F;   // bed between the cab (front) and the rear end
-        var bedFloor = Shape(PrimitiveType.Cube, parent, name + "_bedFloor", bedC, new Vector3(bedW, 0.15F, bedLen), Yellow, yaw, true, floor);
-        var wallL = Shape(PrimitiveType.Cube, parent, name + "_wallL", bedC - side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), Yellow, yaw, true, floor + wall / 2F);
-        var wallR = Shape(PrimitiveType.Cube, parent, name + "_wallR", bedC + side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), Yellow, yaw, true, floor + wall / 2F);
-        var wallF = Shape(PrimitiveType.Cube, parent, name + "_wallF", bedC + forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), Yellow, yaw, true, floor + wall / 2F);
-        var wallB = Shape(PrimitiveType.Cube, parent, name + "_wallB", bedC - forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), Yellow, yaw, true, floor + wall / 2F);
+        var cab = Shape(PrimitiveType.Cube, parent, name + "_cab", center + forward * 3F, new Vector3(bodyW, 2.2F, 2F), cabCol, yaw, true, 2.3F);
+        Vector3 bedC = center + forward * (2F - 0.25F - bedLen / 2F);   // bed right behind the cab (small gap)
+        var bedFloor = Shape(PrimitiveType.Cube, parent, name + "_bedFloor", bedC, new Vector3(bedW, 0.15F, bedLen), bedCol, yaw, true, floor);
+        var wallL = Shape(PrimitiveType.Cube, parent, name + "_wallL", bedC - side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), bedCol, yaw, true, floor + wall / 2F);
+        var wallR = Shape(PrimitiveType.Cube, parent, name + "_wallR", bedC + side * (bedW / 2F), new Vector3(0.12F, wall, bedLen), bedCol, yaw, true, floor + wall / 2F);
+        var wallF = Shape(PrimitiveType.Cube, parent, name + "_wallF", bedC + forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), bedCol, yaw, true, floor + wall / 2F);
+        var wallB = Shape(PrimitiveType.Cube, parent, name + "_wallB", bedC - forward * (bedLen / 2F), new Vector3(bedW, wall, 0.12F), bedCol, yaw, true, floor + wall / 2F);
         // The bucket and arm may not pass through any part of the truck (see BucketBlocker).
         foreach (var part in new[] { chassis, cab, bedFloor, wallL, wallR, wallF, wallB })
             BucketBlocker.Solids.Add(part.GetComponent<Collider>());
+
+        // --- decoration (no colliders) ---
+        Quaternion wheelRot = q * Quaternion.Euler(0F, 0F, 90F);
+        foreach (float ax in new[] { 3.0F, -1.3F, -2.5F })                     // front axle + rear tandem
+            foreach (float sg in new[] { -1F, 1F })
+            {
+                float sd = sg * (bodyW / 2F - 0.2F);
+                Decor(parent, PrimitiveType.Cylinder, name + "_wheel", At(ax, sd, 0.55F), wheelRot, new Vector3(1.1F, 0.2F, 1.1F), tire);
+                Decor(parent, PrimitiveType.Cylinder, name + "_hub", At(ax, sd + sg * 0.03F, 0.55F), wheelRot, new Vector3(0.55F, 0.2F, 0.55F), rim);
+            }
+        foreach (float sg in new[] { -1F, 1F })                                  // mudguards over the rear wheels
+            Decor(parent, PrimitiveType.Cube, name + "_mudguard", At(-1.9F, sg * (bodyW / 2F - 0.2F), 1.2F), q, new Vector3(0.45F, 0.06F, 2.6F), dark);
+        Decor(parent, PrimitiveType.Cube, name + "_windshield", At(4.01F, 0F, 2.85F), q, new Vector3(bodyW * 0.85F, 0.8F, 0.05F), glass);
+        foreach (float sg in new[] { -1F, 1F })
+        {
+            Decor(parent, PrimitiveType.Cube, name + "_sidewindow", At(3.25F, sg * (bodyW / 2F + 0.01F), 2.85F), q, new Vector3(0.04F, 0.65F, 1.1F), glass);
+            Decor(parent, PrimitiveType.Cube, name + "_headlight", At(4.02F, sg * (bodyW / 2F - 0.35F), 1.6F), q, new Vector3(0.35F, 0.2F, 0.05F), light);
+            Decor(parent, PrimitiveType.Cube, name + "_mirror", At(3.9F, sg * (bodyW / 2F + 0.3F), 2.75F), q, new Vector3(0.07F, 0.4F, 0.22F), dark);
+            Decor(parent, PrimitiveType.Cube, name + "_mirrorarm", At(3.9F, sg * (bodyW / 2F + 0.14F), 2.85F), q, new Vector3(0.3F, 0.04F, 0.04F), dark);
+            Decor(parent, PrimitiveType.Cube, name + "_rearlight", At(-4.2F, sg * (bodyW / 2F - 0.45F), 1.05F), q, new Vector3(0.3F, 0.15F, 0.05F), rearLight);
+        }
+        Decor(parent, PrimitiveType.Cube, name + "_grille", At(4.02F, 0F, 1.75F), q, new Vector3(bodyW * 0.5F, 0.5F, 0.05F), dark);
+        Decor(parent, PrimitiveType.Cube, name + "_bumper", At(4.1F, 0F, 1.0F), q, new Vector3(bodyW + 0.1F, 0.28F, 0.25F), rim);
+        Decor(parent, PrimitiveType.Cylinder, name + "_exhaust", At(1.85F, -(bodyW / 2F - 0.15F), 2.9F), q, new Vector3(0.14F, 0.75F, 0.14F), dark);
+        Decor(parent, PrimitiveType.Cylinder, name + "_fueltank", At(0.9F, bodyW / 2F - 0.25F, 0.85F), q * Quaternion.Euler(90F, 0F, 0F), new Vector3(0.55F, 0.45F, 0.55F), rim);
+        // Bed: darker rim along the top of the walls and a cab guard over the front wall.
+        foreach (float sg in new[] { -1F, 1F })
+            Decor(parent, PrimitiveType.Cube, name + "_bedrim", OnGround(bedC + side * sg * (bedW / 2F), floor + wall + 0.04F), q, new Vector3(0.2F, 0.08F, bedLen + 0.1F), bedRim);
+        Decor(parent, PrimitiveType.Cube, name + "_bedrimB", OnGround(bedC - forward * (bedLen / 2F), floor + wall + 0.04F), q, new Vector3(bedW + 0.1F, 0.08F, 0.2F), bedRim);
+        Decor(parent, PrimitiveType.Cube, name + "_cabguard", OnGround(bedC + forward * (bedLen / 2F + 0.15F), floor + wall + 0.3F), q, new Vector3(bedW, 0.6F, 0.25F), bedRim);
 
         Vector3 inside = OnGround(bedC, floor);
         bedArea = new Bounds(inside + Vector3.up * 2F, new Vector3(Mathf.Abs(side.x) * bedW + Mathf.Abs(forward.x) * bedLen,
                                                                    6F, Mathf.Abs(side.z) * bedW + Mathf.Abs(forward.z) * bedLen));
         return inside;
+    }
+
+    // A decorative primitive without a collider (truck details).
+    static GameObject Decor(Transform parent, PrimitiveType type, string name, Vector3 pos, Quaternion rot, Vector3 scale, Color color)
+    {
+        var go = GameObject.CreatePrimitive(type);
+        go.name = name;
+        Object.Destroy(go.GetComponent<Collider>());
+        go.transform.SetParent(parent, true);
+        go.transform.SetPositionAndRotation(pos, rot);
+        go.transform.localScale = scale;
+        go.GetComponent<Renderer>().sharedMaterial = MakeMaterial(color);
+        return go;
     }
 
     public static T AddHazard<T>(GameObject go, string id, HazardKind kind, float warn, float contact) where T : Hazard
@@ -213,6 +267,8 @@ public class WorkerWalker : MonoBehaviour
     // is pushed back out if the machine itself comes closer. Before, his route went straight through the excavator
     // (and that counted as the participant hitting him).
     public static float KeepAway = 0.8F;
+    // true = the worker disappears (and his hazard is switched off) when he reaches the last point of his route.
+    public bool HideAtEnd;
     readonly Queue<(Vector3 pos, float wait)> route = new Queue<(Vector3, float)>();
     float waitUntil, phase, swing;
     Hazard hazard;
@@ -222,7 +278,7 @@ public class WorkerWalker : MonoBehaviour
 
     public void SetLimbs(Transform ll, Transform lr, Transform al, Transform ar) { legL = ll; legR = lr; armL = al; armR = ar; }
 
-    public void Hide() { gameObject.SetActive(false); }
+    public void Hide() { if (hazard != null) hazard.active = false; gameObject.SetActive(false); }
 
     public void WalkTo(Vector3 p, float waitThere = 0F) { route.Enqueue((p, waitThere)); }
 
@@ -259,6 +315,7 @@ public class WorkerWalker : MonoBehaviour
                 pos = new Vector3(target.x, pos.y, target.z);
                 route.Dequeue();
                 waitUntil = Time.time + wait;
+                if (route.Count == 0 && HideAtEnd) { HideAtEnd = false; transform.position = WorldBuilder.OnGround(pos); Hide(); return; }
             }
             else
             {

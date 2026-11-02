@@ -88,6 +88,8 @@ public class AttentionCues : MonoBehaviour
         Driving.Init(this);
         gameObject.AddComponent<DiggingCues>().Init(this);
         gameObject.AddComponent<UndergroundSideView>().Init(this);
+        gameObject.AddComponent<TrenchGradeMap>().Init(this);   // C3: cut/fill colours on the trench floor (pit top view)
+        gameObject.AddComponent<DigVolumeGrid>().Init(this);    // C3: separate small 3D model window of the volume to dig
         gameObject.AddComponent<BucketSideServices>().Init(this);
         gameObject.AddComponent<BucketSideLateralGauge>().Init(this);
         gameObject.AddComponent<BuriedServicesXray>().Init(this);
@@ -191,7 +193,7 @@ public class CueProfile
                 {
                     name = "digging",
                     trajectoryInBucketSideViewOnly = true,
-                    trajectory = false,             // suggested bucket path off: the cut-away shows the soil to dig instead
+                    trajectory = false,             // 2026-11-02: tried again, did not help - OFF
                     bucketSideHeightArrow = true,
                     bucketSideAngleLabel = true, heightArrowInDriverView = true,
                     bucketSideUnderground = true,   // cut-away bucket side view in the trench (C2 + C3)
@@ -211,7 +213,8 @@ public class CueProfile
                     maxObstacleCues = 2, edgeMarkersWorkersOnly = true, workerMotionOnlyApproaching = true,
                     workerMotionArrow = false, groundRing = false, thinHighlight = true,
                     bannerWithTarget = true, steerThreshold = 25F, passAdviceInBanner = false, pathEndRing = false,
-                    trajectory = false,   // no suggested bucket path in Dig and dump (too much in the bucket side view)
+                    trajectory = false,   // 2026-11-02: tried again, did not help - OFF
+                    trajectoryInBucketSideViewOnly = true,   // ... drawn ONLY in the bucket side view (not driver / other views)
                     bucketSideHeightArrow = true,
                     truckWallProximity = true, heightArrowInDriverView = true, bucketSideUnderground = true,
                     bucketSideLateralGauge = true,
