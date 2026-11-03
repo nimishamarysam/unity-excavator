@@ -68,6 +68,7 @@ public class DiggingCues : MonoBehaviour
     LineRenderer approach, cut, entryRing;
     readonly List<LineRenderer> arrows = new List<LineRenderer>();
     LineRenderer heightArrow, targetTick;
+    bool arrowOverDump;   // the arrow is currently drawn over the truck / dump area (bucket side view only then)
     ScreenBox heightText, heightTextDriver, angleText;
     bool gaugeOver;
     DepthGauge depthGauge;   // driver view: fixed depth gauge instead of the floating depth text
@@ -132,9 +133,12 @@ public class DiggingCues : MonoBehaviour
 
     // The height arrow is not drawn in the BUCKET FRONT VIEW (it is on the default layer when it is also
     // shown in the driver view).
+    // 2026-11-03: over the truck the vertical arrow is shown ONLY in the BUCKET SIDE VIEW - not in the driver view
+    // (or mirrors), where the long line through the truck was not needed.
     void PreCull(Camera cam)
     {
         bool on = cam == null || cam != ContextViews.OverBucketCamera;
+        if (arrowOverDump && cam != null && cam != ContextViews.BucketSideCamera) on = false;
         if (heightArrow != null) heightArrow.enabled = on;
         if (targetTick != null) targetTick.enabled = on;
     }
@@ -173,8 +177,11 @@ public class DiggingCues : MonoBehaviour
         Vector3 tipH = root.M.BucketTipPosition;
         bool teethInGround = tipH.y < TerrainDigger.ReferenceGroundHeight(tipH);
         if (op && root.Profile.bucketSideHeightArrow && ContextViews.BucketSideCamera != null && (BucketInDigArea() || overDump) && !teethInGround)
-            DrawHeightArrow(overDump && !BucketInDigArea());
-        else HideHeightArrow();
+        {
+            arrowOverDump = overDump && !BucketInDigArea();
+            DrawHeightArrow(arrowOverDump);
+        }
+        else { arrowOverDump = false; HideHeightArrow(); }
 
         // Driver-view depth gauge: on while the teeth are over the dig pit (also while they are in the ground), off
         // when the bucket is swung away from it - same rule as the DIG VOLUME panel: on within 0.3 m of the area,
@@ -287,15 +294,8 @@ public class DiggingCues : MonoBehaviour
 
         // In the cut-away the label always goes to the LEFT of the arrow (the pipe label is placed below the pipe).
         PlaceText(heightText, cam, (top + bottom) / 2F, txt, c, UndergroundSideView.Active ? -1 : 0);
-        float dNow = refY - tip.y;
-        string driverTxt = UndergroundSideView.Active && tip.y < refY
-            ? $"{dNow:0.00} m deep (target {TargetDepth:0.00})" + (dNow > TargetDepth + overDigTolerance ? $"  {dNow - TargetDepth:0.00} m TOO DEEP" : "")
-            : txt.Replace("\n", "  ");
-        // Driver view: digging -> the fixed depth gauge (the floating text covered the pit); over the dump area -> short text.
-        // Driver view: the depth gauge is handled in LateUpdate (always on); over the dump area -> short text.
-        if (root.Profile.heightArrowInDriverView && overDump && m.OperatorCamera != null)
-            PlaceText(heightTextDriver, m.OperatorCamera, (top + bottom) / 2F, driverTxt, c);
-        else HideText(heightTextDriver);
+        // 2026-11-03: no "x m to ground / truck bed" label in the driver view over the truck any more.
+        HideText(heightTextDriver);
     }
 
     // Depth gauge beside the dig area: its top-right corner just left of the area's far-left corner (as the

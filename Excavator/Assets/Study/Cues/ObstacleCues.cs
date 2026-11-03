@@ -29,6 +29,9 @@ using UnityEngine;
 
 public class ObstacleCues : MonoBehaviour
 {
+    // Line from the bucket teeth to a buried pipe / cable (driver and context views). Off since 2026-11-03.
+    static readonly bool ShowTether = false;   // readonly (not const): no "unreachable code" warning
+
     public float workerRange = 12F;        // metres from the machine
     public float obstacleExtra = 3F;       // cue distance = warning distance + this
     public float powerLineExtra = 2F;
@@ -288,6 +291,11 @@ public class ObstacleCues : MonoBehaviour
         for (int i = k; i < t.marks.Count; i++) CueKit.Hide(t.marks[i]);
 
         // TETHER: a line from the bucket teeth to the nearest point of the service - its length IS the gap.
+        // 2026-11-03: switched off (ShowTether = false) - the yellow / orange line from the bucket to the pipe /
+        // cable was not needed; the proximity widget and the service colours already show the gap.
+        if (!ShowTether) { if (t.tetherD != null) { CueKit.Hide(t.tetherD); CueKit.Hide(t.tetherC); } }
+        else
+        {
         if (t.tetherD == null)
         {
             t.tetherD = CueKit.Line(root.WorldRoot, "CueBuriedTether_" + h.hazardId, 0.04F, true, false, CueKit.DriverOnlyLayer);
@@ -298,6 +306,7 @@ public class ObstacleCues : MonoBehaviour
             lr.loop = false; lr.positionCount = 2;
             lr.SetPosition(0, h.MachinePoint); lr.SetPosition(1, h.HazardPoint);
             CueKit.Paint(lr, col);
+        }
         }
 
         // PROXIMITY WIDGET (parking sensor) instead of a written tag: "PIPE [#][#][#][ ][ ] 0.3 m".

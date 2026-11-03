@@ -14,7 +14,8 @@ using UnityEngine;
 //   - a compact PROXIMITY WIDGET (parking-sensor bar, see ProximityWidget) per service, "CABLE [#][#][ ][ ][ ] 1.5 m",
 //     ONLY while the bucket is within barRange of it (not from the start), DOCKED at a FIXED place in the
 //     window (bottom-left corner, stacked) so it never moves with the arm or the bucket;
-//   - a TETHER line from the bucket teeth to the nearest point of the service, when closer than barRange.
+//   - a TETHER line from the bucket teeth to the nearest point of the service, when closer than barRange
+//     (switched off 2026-11-03, showTether = false).
 //   - C2 shows only the service name (no bar, no number, no tether): proximity guidance is C3 only.
 //   - C3 only: the colour turns red (pulsing) at warning / contact distance. C2: the same without warnings.
 //   - Each service is drawn once, even if it is registered twice.
@@ -28,6 +29,7 @@ public class BucketSideServices : MonoBehaviour
     public float dash = 0.3F, gap = 0.2F;
     public float cableWidth = 0.07F, pipeWidth = 0.12F;
     public float barRange = 2F;          // the proximity bar starts to fill (and the tether appears) inside this distance (m)
+    public bool showTether = false;      // line from the bucket teeth to the service (off since 2026-11-03)
     // 2026-11-01: the CABLE runs along the trench, BESIDE it - parallel to this view, so its dashed line was drawn
     // across the trench and looked as if the cable lay in the dig path. Off: only the PIPE (which really crosses
     // under the trench) gets a dashed line here; the cable keeps its proximity widget (and C3 tether) when close.
@@ -181,7 +183,9 @@ public class BucketSideServices : MonoBehaviour
 
             float dist = Mathf.Max(0F, h.CurrentDistance);
             // Tether: teeth -> nearest point of the service, when close.
-            if (guidance && dist < barRange)   // C3 only
+            // 2026-11-03: off (showTether = false) - the line from the bucket to the pipe / cable was not needed;
+            // the proximity widget and the service ring / dashed line already show the gap.
+            if (showTether && guidance && dist < barRange)   // C3 only
             {
                 var tl = Tether(nt++);
                 tl.loop = false; tl.positionCount = 2;

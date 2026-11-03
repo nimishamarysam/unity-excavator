@@ -355,7 +355,10 @@ public class StudyManager : MonoBehaviour
         }
         else GUILayout.Label("Enter a number of 1 or more.", normal);
         GUILayout.Space(10);
-        GUILayout.Label("Data folder: " + StudyLogger.Instance.FolderPath, normal);
+        // StudyLogger.Instance is null after a script reload during Play mode (scripts changed while playing): do not throw
+        // here - an exception between BeginArea/EndArea also causes "Invalid GUILayout state" errors every frame.
+        GUILayout.Label("Data folder: " + (StudyLogger.Instance != null ? StudyLogger.Instance.FolderPath
+                                                                         : "(logger not ready - stop and restart Play mode)"), normal);
         GUILayout.Space(20);
         GUILayout.Label(StickControls.Active
             ? $"Joystick: hat left / right = participant number,  hat up = practice on/off,  {StickControls.ConfirmName} = start"
