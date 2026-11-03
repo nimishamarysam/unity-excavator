@@ -724,6 +724,12 @@ public class DigDumpScenario : Scenario
     Vector3 f, left, bedCenter, pit;
     int loads, spills, trips;
     bool atDump;
+    // 2026-11-03: the task-completed screen comes only after the LAST (Goal-th) load has landed and settled on the
+    // truck bed - not at the moment the bucket opens. goalReached = counted, waiting for the soil to land;
+    // settledAt = trial time when no soil was falling any more; the trial ends SettleDelay seconds later.
+    const float SettleDelay = 1.0F;
+    bool goalReached;
+    float settledAt = -1F;
     WorkerWalker pitWorker, truckWorker;
     float pitWorkerAt, truckWorkerAt;
     bool loadedBefore;                 // for the scoop position check
@@ -915,7 +921,7 @@ public class DigDumpScenario : Scenario
             if (inTruck) CheckInBox("dump", "dump_box", WorldBuilder.OnGround(dumpPos), f, 5.5F, 4.5F);
             if (inTruck && load.LastDumpAmount < MinLoadFill - 1e-3F)
                 StudyLogger.Log("truck_load_too_small", $"amount={load.LastDumpAmount:F2};min={MinLoadFill:F2}");   // in the truck, but not counted
-            else if (inTruck) { loads++; StudyLogger.Log("truck_load", $"{loads};amount={load.LastDumpAmount:F2}"); if (loads >= Goal) Complete("completed"); }
+            else if (inTruck) { loads++; StudyLogger.Log("truck_load", $"{loads};amount={load.LastDumpAmount:F2}"); if (loads >= Goal && !goalReached) { goalReached = true; StudyLogger.Log("goal_reached", "waiting_for_soil_to_settle"); } }
             else { spills++; StudyLogger.Log("spill", $"missed_truck;amount={load.LastDumpAmount:F2};outside_share={outShare:F2}"); }
         };
     }
@@ -1022,6 +1028,14 @@ public class DigDumpScenario : Scenario
         UpdateRouteTarget();
         float t = SM.TrialTime;
         Vector3 c = M.SwingCenter;
+
+        // Last load dumped: end the trial once the soil has landed on the bed and had a moment to settle.
+        if (goalReached)
+        {
+            if (SoilFall.InFlight > 0) settledAt = -1F;
+            else if (settledAt < 0F) { settledAt = t; StudyLogger.Log("soil_settled", $"loads={loads}"); }
+            else if (t - settledAt >= SettleDelay) { Complete("completed"); return; }
+        }
 
         bool loadedNow = load != null && load.IsLoaded;
         if (loadedNow && !loadedBefore) CheckInBox("dig", "dig_box", WorldBuilder.OnGround(digPos), f, 5.5F, 4.5F);

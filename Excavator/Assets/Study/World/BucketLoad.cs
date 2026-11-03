@@ -405,9 +405,15 @@ public class SoilFall : MonoBehaviour
     float amount, speed;
     Transform heapParent;
     GameObject chunk;
+    bool counted;
+
+    // Number of soil lumps still falling (0 = all dumped soil has landed). Used by DigDumpScenario to end the task
+    // only after the last load has settled on the truck bed.
+    public static int InFlight { get; private set; }
 
     public void Begin(Vector3 from, Vector3 to, float amt, Transform parent)
     {
+        if (!counted) { counted = true; InFlight++; }
         target = to; amount = amt; heapParent = parent;
         transform.position = from;
         chunk = new GameObject("Chunk");
@@ -428,6 +434,11 @@ public class SoilFall : MonoBehaviour
             SoilHeap.AddAt(target, amount, heapParent);
             Destroy(gameObject);
         }
+    }
+
+    void OnDestroy()
+    {
+        if (counted) { counted = false; InFlight = Mathf.Max(0, InFlight - 1); }
     }
 }
 
