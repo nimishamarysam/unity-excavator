@@ -41,6 +41,11 @@ public class BucketLoad : MonoBehaviour
     // (0.5 m) beyond the marked edge and 0.3 m below the ground; now the teeth only 0.2 m past the edge and 0.15 m deep.
     public float outsideMargin = 0.2F;     // teeth this far beyond the marked edge count as outside
     public float outsideDepth = 0.15F;     // ... when at least this deep below the original ground
+    // 2026-11-03: the bucket BODY (back/heel) gets its own, larger tolerance. When the bucket is lowered at the trench
+    // end and curled in, its back swings past the edge line towards the cab - normal operation (the back shaves the
+    // end wall), not digging outside the area. The teeth keep the strict outsideMargin.
+    public float bodyOutsideMargin = 0.35F;   // bucket body points this far beyond the marked edge count as outside
+    public float bodyOutsideDepth = 0.25F;    // ... when at least this deep below the original ground
 
     // Called with the world position where the soil was released. LastDumpAmount says how much (0..1).
     public event Action<Vector3> Dumped;
@@ -138,8 +143,8 @@ public class BucketLoad : MonoBehaviour
         bool outside = digger != null && !digger.Contains(tip, outsideMargin) && depthBelowOriginal > outsideDepth;
         string part = "teeth";
         Vector3 at = tip;
-        // 2026-11-01: the WHOLE bucket, not only the teeth - any corner of the bucket's box (mesh bounds, shrunk to
-        // BodyBoxShrink so the box hugs the bucket) that is in the ground outside the marked area also counts.
+        // 2026-11-01: the WHOLE bucket, not only the teeth - any point of the bucket shell that is in the ground
+        // outside the marked area (by more than bodyOutsideMargin / bodyOutsideDepth) also counts.
         if (!outside && digger != null && !outsideLogged && BucketCornerOutside(digger, out Vector3 corner))
         {
             outside = true; part = "bucket_body"; at = corner;
@@ -318,30 +323,66 @@ public class BucketLoad : MonoBehaviour
         Dumped?.Invoke(at);
     }
 
-    const float BodyBoxShrink = 0.85F;   // bucket box (mesh bounds) scaled by this for the outside-digging check
+    const float BodyBoxShrink = 0.85F;   // fallback only: bucket box scaled by this when the mesh is not readable
 
     bool BucketCornerOutside(TerrainDigger digger, out Vector3 corner) =>
-        BucketBodyOutside(machine, digger, outsideMargin, outsideDepth, out corner);
+        BucketBodyOutside(machine, digger, bodyOutsideMargin, bodyOutsideDepth, out corner);
 
-    // Is any corner of the bucket box in the ground (deeper than 'depth') outside the dig area (+ 'margin')?
+    // Is any point of the bucket SHELL in the ground (deeper than 'depth') outside the dig area (+ 'margin')?
     // Also used by SoilSideBlocker (a bucket that is partly outside may always be moved back).
+    // 2026-11-03: was the 8 corners of the mesh bounding box. A bucket is curved, so the box corners lie well
+    // outside the real shell (mostly the back-top corner); when the bucket curls in at the trench end that empty
+    // corner swung past the edge and fired "Digging outside the area" although the bucket itself was inside.
+    // Now uses points sampled from the real mesh vertices (box corners only if the mesh is not readable).
     public static bool BucketBodyOutside(Excavator machine, TerrainDigger digger, float margin, float depth, out Vector3 corner)
     {
         corner = Vector3.zero;
         if (machine == null || digger == null) return false;
         var mc = machine.BucketMeshCollider;
         if (mc == null || mc.sharedMesh == null) return false;
-        Bounds b = mc.sharedMesh.bounds;
         Transform t = mc.transform;
-        Vector3 e = b.extents * BodyBoxShrink;
-        for (int i = 0; i < 8; i++)
+        foreach (var local in ShellPoints(mc.sharedMesh))
         {
-            Vector3 local = b.center + new Vector3((i & 1) == 0 ? -e.x : e.x, (i & 2) == 0 ? -e.y : e.y, (i & 4) == 0 ? -e.z : e.z);
             Vector3 w = t.TransformPoint(local);
             float d = TerrainDigger.ReferenceGroundHeight(w) - w.y;
             if (d > depth && !digger.Contains(w, margin)) { corner = w; return true; }
         }
         return false;
+    }
+
+    // Bucket mesh vertices thinned to one per grid cell (~ShellCells per side), cached per mesh.
+    const int ShellCells = 6;
+    static Mesh shellMesh;
+    static Vector3[] shellPoints;
+    static Vector3[] ShellPoints(Mesh mesh)
+    {
+        if (mesh == shellMesh && shellPoints != null) return shellPoints;
+        shellMesh = mesh;
+        Bounds b = mesh.bounds;
+        var pts = new List<Vector3>();
+        if (mesh.isReadable)
+        {
+            Vector3 cell = b.size / ShellCells;
+            var seen = new HashSet<Vector3Int>();
+            foreach (var v in mesh.vertices)
+            {
+                Vector3 r = v - b.min;
+                var key = new Vector3Int(
+                    cell.x > 1e-5F ? Mathf.Min(ShellCells - 1, (int)(r.x / cell.x)) : 0,
+                    cell.y > 1e-5F ? Mathf.Min(ShellCells - 1, (int)(r.y / cell.y)) : 0,
+                    cell.z > 1e-5F ? Mathf.Min(ShellCells - 1, (int)(r.z / cell.z)) : 0);
+                if (seen.Add(key)) pts.Add(v);
+            }
+        }
+        if (pts.Count == 0)
+        {   // fallback: shrunk box corners (old behaviour)
+            Vector3 e = b.extents * BodyBoxShrink;
+            for (int i = 0; i < 8; i++)
+                pts.Add(b.center + new Vector3((i & 1) == 0 ? -e.x : e.x, (i & 2) == 0 ? -e.y : e.y, (i & 4) == 0 ? -e.z : e.z));
+        }
+        else StudyLogger.Log("bucket_shell_points", $"count={pts.Count};vertices={mesh.vertexCount}");
+        shellPoints = pts.ToArray();
+        return shellPoints;
     }
 
     static RaycastHit[] SortedHits(Vector3 from)
