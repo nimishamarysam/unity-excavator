@@ -97,7 +97,17 @@ public class DigVolumeGrid : MonoBehaviour
         mk.layer = ModelLayer;
         mk.transform.SetParent(transform, false);
         mk.transform.localScale = new Vector3(0.45F, 0.2F, 0.45F);
-        mk.GetComponent<Renderer>().sharedMaterial = new Material(Shader.Find("Unlit/Color")) { color = new Color(1F, 0.85F, 0.1F) };
+        // 2026-11-04: was Shader.Find("Unlit/Color"). That shader is NOT in a player build (no material uses it and it is
+        // not in Always Included Shaders), so Find returned null, new Material(null) threw, Init stopped before the model
+        // camera was made and the DIG VOLUME window never appeared in the built app (it worked in the Editor).
+        // Now uses shaders that are in the build (the Resources one first).
+        Shader mkSh = Shader.Find("Study/UnlitVertexColor");
+        if (mkSh == null) mkSh = Shader.Find("Sprites/Default");
+        var mkMesh = mk.GetComponent<MeshFilter>().mesh;   // the vertex-colour shader takes its colour from the mesh
+        var mkCols = new Color[mkMesh.vertexCount];
+        for (int i = 0; i < mkCols.Length; i++) mkCols[i] = new Color(1F, 0.85F, 0.1F);
+        mkMesh.colors = mkCols;
+        mk.GetComponent<Renderer>().sharedMaterial = new Material(mkSh) { color = new Color(1F, 0.85F, 0.1F) };
         marker = mk.transform;
 
         // Faint background: a see-through quad behind the model, filling this camera's view (driver view only).
