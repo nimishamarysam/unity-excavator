@@ -357,7 +357,7 @@ public class StudyManager : MonoBehaviour
         GUILayout.Space(10);
         // StudyLogger.Instance is null after a script reload during Play mode (scripts changed while playing): do not throw
         // here - an exception between BeginArea/EndArea also causes "Invalid GUILayout state" errors every frame.
-        GUILayout.Label("Data folder: " + (StudyLogger.Instance != null ? StudyLogger.Instance.FolderPath
+        GUILayout.Label("Data folder: " + (StudyLogger.Instance != null ? StudyLogger.Instance.FolderPath + (id >= 1 ? $"\\P{id:00}" : "")
                                                                          : "(logger not ready - stop and restart Play mode)"), normal);
         GUILayout.Space(20);
         GUILayout.Label(StickControls.Active
@@ -383,7 +383,7 @@ public class StudyManager : MonoBehaviour
             case State.Briefing:
                 var t = CurrentTrial;
                 int measured = t.scenario == StudyScenario.Practice ? 0 : CountMeasuredUpTo(trialPos);
-                list.Add(new ScreenItem(t.scenario == StudyScenario.Practice ? "Practice" : $"Task {measured} of 9", true));
+                list.Add(new ScreenItem(t.scenario == StudyScenario.Practice ? "Practice" : $"Task {measured} of {StudyDesign.MeasuredTrialCount}", true));
                 if (t.scenario != StudyScenario.Practice)
                 {
                     list.Add(new ScreenItem("Display: " + StudyDesign.ConditionLabel(t.condition), space: 10));
@@ -433,7 +433,7 @@ public class StudyManager : MonoBehaviour
 
             case State.Finished:
                 list.Add(new ScreenItem("Session complete - thank you!", true));
-                list.Add(new ScreenItem("Data saved in: " + StudyLogger.Instance.FolderPath, space: 10));
+                list.Add(new ScreenItem("Data saved in: " + StudyLogger.Instance.SessionFolder, space: 10));
                 break;
         }
         return list;

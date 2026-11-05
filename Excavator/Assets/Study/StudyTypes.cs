@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-// Shared definitions for the user study: the 3 UI conditions, the 3 scenarios
-// and the Latin-square order that decides which condition comes first.
+// Shared definitions for the user study: the UI conditions (C1 and C3; C2 removed
+// 2026-11-05), the 3 scenarios and the counterbalanced order that decides which condition comes first.
 // ---------------------------------------------------------------------------
 
 public enum StudyCondition
 {
     C1_Baseline = 0,         // measurement bar only
-    C2_ContextAware = 1,     // + context-aware camera views
+    C2_ContextAware = 1,     // REMOVED from the experiment 2026-11-05 (no trials use it); value kept so logged numbers stay the same
     C3_AttentionGuided = 2   // + context-aware views + attention-guiding cues
 }
 
@@ -20,7 +20,7 @@ public enum StudyScenario
 
 public struct TrialInfo
 {
-    public int index;              // 0 = practice (if used), then 1..9
+    public int index;              // 0 = practice (if used), then 1..6
     public StudyCondition condition;
     public StudyScenario scenario;
     public int seed;               // random seed for hazard positions/timings (logged)
@@ -30,12 +30,12 @@ public struct TrialInfo
 
 public static class StudyDesign
 {
-    // 3x3 Latin square: each condition appears once in each position.
+    // 2x2 counterbalancing (AB/BA): each condition appears once in each position.
+    // C2 (context-aware views only) was removed from the experiment on 2026-11-05.
     static readonly StudyCondition[][] latinSquare =
     {
-        new[] { StudyCondition.C1_Baseline, StudyCondition.C2_ContextAware, StudyCondition.C3_AttentionGuided },
-        new[] { StudyCondition.C2_ContextAware, StudyCondition.C3_AttentionGuided, StudyCondition.C1_Baseline },
-        new[] { StudyCondition.C3_AttentionGuided, StudyCondition.C1_Baseline, StudyCondition.C2_ContextAware },
+        new[] { StudyCondition.C1_Baseline, StudyCondition.C3_AttentionGuided },
+        new[] { StudyCondition.C3_AttentionGuided, StudyCondition.C1_Baseline },
     };
 
     // The three scenarios. Their order is shuffled per condition block (see BuildTrials).
@@ -45,12 +45,16 @@ public static class StudyDesign
         //StudyScenario.Moderate_Digging
     };
 
-    // Participant 1 gets row 0, participant 2 row 1, participant 3 row 2, participant 4 row 0 ...
+    // Odd participant numbers get row 0 (C1 first), even numbers row 1 (C3 first).
     public static StudyCondition[] ConditionOrder(int participantId)
     {
-        int row = ((participantId - 1) % 3 + 3) % 3;
+        int n = latinSquare.Length;
+        int row = ((participantId - 1) % n + n) % n;
         return latinSquare[row];
     }
+
+    // Number of measured trials (conditions x scenarios), e.g. for "Task 3 of 6".
+    public static int MeasuredTrialCount => latinSquare[0].Length * scenarioOrder.Length;
 
     public static System.Collections.Generic.List<TrialInfo> BuildTrials(int participantId, bool includePractice)
     {

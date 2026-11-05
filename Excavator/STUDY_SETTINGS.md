@@ -25,7 +25,7 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Phase 3 (free practice) starts with an instruction page; its timer starts only when that page is continued with A | `phase3_intro` step | – | `Study/Scenarios/PracticeGuide.cs` |
 | After all 3 phases (hold A in phase 3, or its time is up): "Practice complete" menu - Start the tasks / Repeat phase 1 / 2 / 3. Choose with joystick hat or D-pad up/down (keyboard arrows), confirm with A (Enter). Only "Start the tasks" ends the practice. A phase repeated after the menu is played on its own and then returns to the menu | `OpenMenu`, `MenuInput`, `DrawMenu`, `MenuMinSeconds` (1 s) | – | `Study/Scenarios/PracticeGuide.cs` |
 | Practice trial on/off | setup screen toggle (gamepad Y) | on | `Study/StudyManager.cs` (`includePractice`) |
-| Condition order (Latin square) | `latinSquare` | C1-C2-C3 / C2-C3-C1 / C3-C1-C2 | `Study/StudyTypes.cs` |
+| Condition order (counterbalanced) | `latinSquare` | C1-C3 (odd participant no.) / C3-C1 (even). C2 removed from the experiment 2026-11-05 (enum value kept for log compatibility) | `Study/StudyTypes.cs` |
 | Which scenarios are in the study | `scenarioOrder` | Driving, Digging, Dig and dump | `Study/StudyTypes.cs` |
 | Scenario shuffle seed / trial seeds | `BuildTrials` (`id*7919+17`, `id*1000`) | – | `Study/StudyTypes.cs` |
 | What each condition shows | `ShowContextViews` (C2+), `ShowAttentionCues` (C3) | – | `Study/StudyManager.cs` |
@@ -40,7 +40,7 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | What | Setting | Default | File |
 |---|---|---|---|
 | Sample rate of the samples CSV | `sampleRateHz` | 10 Hz | `Study/StudyLogger.cs` |
-| Output folder / CSV columns | `FolderPath`, `OpenSession` | `StudyData/` | `Study/StudyLogger.cs` |
+| Output folder / CSV columns | `FolderPath`, `SessionFolder`, `OpenSession` | `StudyData/participants/P<nn>/simulator_logs/` (+ empty `questionnaires/` for forms collected outside the simulator); logs from before 2026-11-05 moved to `StudyData/test_logs/` | `Study/StudyLogger.cs` |
 | Which events count as incidents | `IncidentType()` | contacts, impacts, spills, over-dig, outside area, bucket over worker | `Study/IncidentFeedback.cs` |
 | Dig and dump: truck bed size / dump tolerance (smaller = dumping must be aimed) | `WorldBuilder.TruckBedLength`, `TruckBedWidth`; `DigDumpScenario.TruckDumpMargin` | 4.5 × 2.6 m (was 6.0 × 3.2 m); 0 m (was 0.3 m) | `Study/World/WorldBuilder.cs`, `Study/Scenarios/Scenarios.cs` |
 | Dig and dump: minimum bucket load for a truck load to count (less = `truck_load_too_small`, not counted, no spill) | `DigDumpScenario.MinLoadFill` | 0.8 (80 %) | `Study/Scenarios/Scenarios.cs` |
