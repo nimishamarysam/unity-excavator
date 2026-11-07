@@ -783,7 +783,9 @@ public class PracticeGuide : MonoBehaviour
         if (AdvanceWithOK && (s.kind == Kind.Drive || s.kind == Kind.Dig))
         {
             float extra = StickControls.SingleStick && s.kind == Kind.Dig ? 22F * k : 0F;   // single stick: trigger line
-            float below = 34F * k + 34F * k + 50F * k + 54F * k + 24F * k + 8F * k;       // diagram gap, legend, feedback, OK row, margin
+            float below = 12F * k + small.CalcHeight(new GUIContent(StickLegend), w) + 8F * k   // gap, legend
+                        + FeedbackHeight(w, k)                                                 // feedback line (2 lines)
+                        + OkRowHeight(w, k) + 12F * k;                                         // OK row + margin
             d = Mathf.Max(50F * k, Mathf.Min(d, r.yMax - y - 22F * k - below - extra));
         }
         if (s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig)
@@ -810,28 +812,29 @@ public class PracticeGuide : MonoBehaviour
         }
         bool stickStep = s.kind == Kind.Drive || s.kind == Kind.Dig;
         // Keyboard keys (s.keys) are not shown: the study uses the gamepad only.
-        if (stickStep) GUI.Label(new Rect(x, y, w, 24 * k), "Yellow arrow = move the stick this way,  white dot = your stick", small);
-        y += 34 * k;
+        if (stickStep && AdvanceWithOK)
+        {
+            float lh = small.CalcHeight(new GUIContent(StickLegend), w);
+            GUI.Label(new Rect(x, y, w, lh), StickLegend, small);
+            y += lh + 8F * k;
+        }
+        else
+        {
+            if (stickStep) GUI.Label(new Rect(x, y, w, 24 * k), "Yellow arrow = move the stick this way,  white dot = your stick", small);
+            y += 34 * k;
+        }
 
         if (stickStep && AdvanceWithOK)
         {
             // Feedback line, then "Press the OK button to continue" at the bottom of the panel (as on the info pages).
             bool showWrongOk = SM.TrialTime - s.startedAt >= HintGraceSeconds && wrongStreak >= WrongBeforeHint;
-            string hOk = lastOk || lastNear ? "Correct - practise as long as you like."
+            string hOk = lastOk || lastNear ? "Correct"
                        : !showWrongOk ? ""
                        : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. {StickControls.Cap(StickControls.ModeSwitch)} to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
                        : "Not quite - move the stick the way the arrow points.";
             hint.normal.textColor = lastOk || lastNear ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
-            GUI.Label(new Rect(x, y, w, 50 * k), hOk, hint);
-
-            bool ready = ControlReady(s);
-            float bs = 54F * k, by = Mathf.Min(r.yMax - bs - 8F * k, Mathf.Max(y + 50F * k, r.yMax - bs - 24F * k));
-            float bw = ButtonBoxWidth(bs, k);
-            var a = new Rect(x, by, bw, bs);
-            Fill(a, ready ? new Color(0.2F, 0.7F, 0.25F) : new Color(0.3F, 0.3F, 0.32F));
-            GUI.Label(a, StickControls.ConfirmBox, bigCenter);
-            string cont = StickControls.Active ? $"Press the {StickControls.ConfirmName} to continue" : "Press A to continue";
-            GUI.Label(new Rect(x + bw + 16F * k, by, w - bw - 16F * k, bs), cont, title);
+            GUI.Label(new Rect(x, y, w, FeedbackHeight(w, k)), hOk, hint);
+            DrawOkRow(r, x, w, k, ControlReady(s), ContinueText);
         }
         else if (stickStep)   // previous behaviour: hold bar
         {
@@ -951,13 +954,7 @@ public class PracticeGuide : MonoBehaviour
         GUI.Label(new Rect(x, y, w, hh), how, body);
 
         bool ready = SM.TrialTime - s.startedAt >= InfoMinSeconds;
-        float bs = 54F * k, by = panel.yMax - bs - 24F * k;
-        float bw = ButtonBoxWidth(bs, k);
-        var a = new Rect(x, by, bw, bs);
-        Fill(a, ready ? new Color(0.2F, 0.7F, 0.25F) : new Color(0.3F, 0.3F, 0.32F));
-        GUI.Label(a, StickControls.ConfirmBox, bigCenter);
-        string cont = StickControls.Active ? $"Press the {StickControls.ConfirmName} to continue" : "Press A to continue";
-        GUI.Label(new Rect(x + bw + 16F * k, by, w - bw - 16F * k, bs), ready ? cont : "Read this first...", title);
+        DrawOkRow(panel, x, w, k, ready, ready ? ContinueText : "Read this first...");
 
 
     }
@@ -995,6 +992,39 @@ public class PracticeGuide : MonoBehaviour
                 return new Rect(0F, Screen.height - h, Screen.width, h);
             default: return Rect.zero;
         }
+    }
+
+    // ---- "Press the OK button to continue" row (control steps and info pages) ----
+    // The text wraps next to the green OK box and the row grows with it, always inside the panel's bottom edge.
+    const string StickLegend = "Arrow = move the stick this way.  Dot = your stick.";
+    static string ContinueText => StickControls.Active ? $"Press the {StickControls.ConfirmName} to continue" : "Press A to continue";
+    GUIStyle okText;
+
+    GUIStyle OkTextStyle(float k)
+    {
+        if (okText == null) { okText = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, wordWrap = true, alignment = TextAnchor.MiddleLeft }; okText.normal.textColor = Color.white; }
+        okText.fontSize = Mathf.RoundToInt(22 * k);
+        return okText;
+    }
+
+    float OkRowHeight(float w, float k)
+    {
+        float bs = 54F * k, bw = ButtonBoxWidth(bs, k);
+        return Mathf.Max(bs, OkTextStyle(k).CalcHeight(new GUIContent(ContinueText), w - bw - 16F * k));
+    }
+
+    float FeedbackHeight(float w, float k) =>
+        Mathf.Max(hint.CalcHeight(new GUIContent("Not quite - move the stick the way the arrow points."), w), 2F * hint.lineHeight) + 4F * k;
+
+    void DrawOkRow(Rect panel, float x, float w, float k, bool ready, string text)
+    {
+        float bs = 54F * k, bw = ButtonBoxWidth(bs, k), tw = w - bw - 16F * k;
+        float rh = Mathf.Max(bs, OkTextStyle(k).CalcHeight(new GUIContent(text), tw));
+        float by = panel.yMax - rh - 12F * k;
+        var a = new Rect(x, by + (rh - bs) / 2F, bw, bs);
+        Fill(a, ready ? new Color(0.2F, 0.7F, 0.25F) : new Color(0.3F, 0.3F, 0.32F));
+        GUI.Label(a, StickControls.ConfirmBox, bigCenter);
+        GUI.Label(new Rect(x + bw + 16F * k, by, tw, rh), text, OkTextStyle(k));
     }
 
     // Width of the green button box: square for "A", wider for a joystick label such as "THUMB".
