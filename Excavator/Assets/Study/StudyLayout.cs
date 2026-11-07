@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 // ---------------------------------------------------------------------------
 // STUDY SCREEN LAYOUT (identical in all three conditions)
@@ -50,9 +51,34 @@ public class StudyLayout : MonoBehaviour
         get
         {
             float w = Mathf.Max(1F, Screen.width), h = Mathf.Max(1F, Screen.height);
-            return BarHeightRef * Mathf.Sqrt(w / 1920F * h / 1080F) / h;
+            return BarHeightRef * TextScale * Mathf.Sqrt(w / 1920F * h / 1080F) / h;
         }
     }
+    // >>> DISPLAY 1 TEXT SIZE (2026-11-07, lab projector): one factor for the participant's text on Display 1 -
+    //     status bar, task panel, practice walkthrough panel, camera-window labels and the obstacle-camera label.
+    //     Change it while the program runs with the + and - keys (0.1 steps, 0.5 - 3); it is saved on this computer
+    //     at once and used at every start. A short "Text size x1.3" note confirms each change.
+    //     The C3 cue labels in the driver view and the setup screen keep their size.
+    public static float TextScale { get; private set; } = 1F;
+    public const string TextScalePrefKey = "Display1.TextScale";
+    static readonly System.Collections.Generic.List<Canvas> textCanvases = new System.Collections.Generic.List<Canvas>();
+
+    // A canvas whose size in pixels follows TextScale (its contents are laid out in pixels, positions in 0..1).
+    public static void ScaleWithText(Canvas c)
+    {
+        if (c == null) return;
+        textCanvases.Add(c);
+        c.scaleFactor = TextScale;
+    }
+
+    public static void SetTextScale(float s, bool save)
+    {
+        TextScale = Mathf.Clamp(Mathf.Round(s * 10F) / 10F, 0.5F, 3F);
+        textCanvases.RemoveAll(c => c == null);
+        foreach (var c in textCanvases) c.scaleFactor = TextScale;
+        if (save) { PlayerPrefs.SetFloat(TextScalePrefKey, TextScale); PlayerPrefs.Save(); }
+    }
+
     public const float PanelWidth = 0.28F;           // right-hand panel (one-display layout, practice instructions)
     public const float Gap = 0.006F;
 
@@ -80,6 +106,7 @@ public class StudyLayout : MonoBehaviour
 
     public static void ApplySetup()
     {
+        SetTextScale(PlayerPrefs.GetFloat(TextScalePrefKey, 1F), false);
         Setup = ReadSetup();
         switch (Setup)
         {
@@ -199,6 +226,37 @@ public class StudyLayout : MonoBehaviour
         cam.cullingMask = 0;
         cam.targetDisplay = display;
         return cam;
+    }
+
+    float textNoteUntil = -1F;
+    GUIStyle textNoteStyle;
+
+    void Update()
+    {
+        // + / - : Display 1 text size (main keyboard or numpad), saved at once.
+        var kb = Keyboard.current;
+        if (kb == null) return;
+        float d = 0F;
+        if (kb.equalsKey.wasPressedThisFrame || kb.numpadPlusKey.wasPressedThisFrame) d = 0.1F;
+        if (kb.minusKey.wasPressedThisFrame || kb.numpadMinusKey.wasPressedThisFrame) d = -0.1F;
+        if (d == 0F) return;
+        SetTextScale(TextScale + d, true);
+        textNoteUntil = Time.unscaledTime + 1.5F;
+        Debug.Log($"[StudyLayout] Display 1 text size x{TextScale:0.0}");
+    }
+
+    void OnGUI()
+    {
+        if (Time.unscaledTime > textNoteUntil) return;
+        GUI.depth = -900;
+        if (textNoteStyle == null) textNoteStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 26, fontStyle = FontStyle.Bold };
+        textNoteStyle.normal.textColor = Color.white;
+        var r = new Rect(Screen.width / 2F - 160F, 20F, 320F, 50F);
+        var old = GUI.color;
+        GUI.color = new Color(0F, 0F, 0F, 0.8F);
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        GUI.color = old;
+        GUI.Label(r, $"Text size x{TextScale:0.0}", textNoteStyle);
     }
 
     void LateUpdate()

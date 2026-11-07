@@ -304,6 +304,16 @@ public class ScenarioRunner : MonoBehaviour
         }
         if (incidentStyle == null) incidentStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold, wordWrap = true };
 
+        // Display 1 text size: the whole panel (text, incident line, map) is scaled from the top-left corner.
+        var oldMatrix = GUI.matrix;
+        float ts = StudyLayout.TextScale;
+        GUI.matrix = Matrix4x4.Scale(new Vector3(ts, ts, 1F)) * oldMatrix;
+        try { DrawTaskPanel(); }
+        finally { GUI.matrix = oldMatrix; }
+    }
+
+    void DrawTaskPanel()
+    {
         // Task panel: task, progress and incidents on the left; (if the scenario has one) a small line map on the right.
         bool hasMap = current.Map != null;
         const float textH = 118F, incH = 26F, mapW = 130F;

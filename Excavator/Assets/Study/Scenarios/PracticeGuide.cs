@@ -687,7 +687,7 @@ public class PracticeGuide : MonoBehaviour
         }
         else
         {
-            k = Screen.height / 1080F;
+            k = Screen.height / 1080F * StudyLayout.TextScale;   // Display 1 text size (+ / - keys)
             Rect slot = StudyLayout.GuidePanel;    // right-hand part of Display 1 (viewport coords, y up)
             float top = 150F * k;                  // leave the mode icons (top right) visible
             r = new Rect(slot.x * Screen.width, (1F - slot.yMax) * Screen.height + top,
@@ -909,14 +909,21 @@ public class PracticeGuide : MonoBehaviour
 
     // Screen rectangles (GUI coordinates, y down) of the parts explained by the info pages.
     // Task panel geometry matches ScenarioRunner.OnGUI (16 px margin, 520 px wide without map, text 118 + incident line 26).
+    static Rect Scaled(Rect r)
+    {
+        float t = StudyLayout.TextScale;
+        return new Rect(r.x * t, r.y * t, r.width * t, r.height * t);
+    }
+
     static Rect AreaRect(Area a)
     {
         const float m = 16F, textH = 118F, incH = 26F;
         float width = ScenarioRunner.Current != null && ScenarioRunner.Current.Map != null ? 640F : 520F;
         switch (a)
         {
-            case Area.TaskPanel: return new Rect(m, m, width, textH + incH + 16F);
-            case Area.Incidents: return new Rect(m, m + 8F + textH - 4F, width, incH + 8F);
+            // The task panel is scaled by the Display 1 text size from the screen's top-left corner (ScenarioRunner).
+            case Area.TaskPanel: return Scaled(new Rect(m, m, width, textH + incH + 16F));
+            case Area.Incidents: return Scaled(new Rect(m, m + 8F + textH - 4F, width, incH + 8F));
             case Area.StatusBar:
                 float h = StudyLayout.BarHeight * Screen.height;
                 return new Rect(0F, Screen.height - h, Screen.width, h);

@@ -173,6 +173,7 @@ public class PopupViews : MonoBehaviour
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 45;
         canvas.targetDisplay = p.cam.targetDisplay;
+        StudyLayout.ScaleWithText(canvas);   // label follows the Display 1 text size
 
         var boxGo = new GameObject("Box", typeof(RectTransform));
         boxGo.transform.SetParent(p.frame.transform, false);

@@ -137,6 +137,7 @@ public class ContextViews : MonoBehaviour
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 40;
         StudyLayout.ToContextDisplay(canvas);
+        StudyLayout.ScaleWithText(canvas);   // window label follows the Display 1 text size
 
         float t = 3F;
         w.edges[0] = Edge(w.frame, new Vector2(r.xMin, r.yMax), new Vector2(r.xMax, r.yMax), new Vector2(0, t), new Vector2(0, 0));

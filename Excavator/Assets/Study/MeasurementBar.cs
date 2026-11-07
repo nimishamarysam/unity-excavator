@@ -16,6 +16,7 @@ public class MeasurementBar : MonoBehaviour
     public float refreshRateHz = 10F;      // numbers update 10 times per second (easier to read)
 
     GameObject canvasGo;
+    CanvasScaler scaler;
     Text mode, swing, boom, arm, bucket, height, tilt, speed, loadText;
     BucketLoad load;   // the scenario's bucket load (found when needed; changes every trial)
     float nextRefresh;
@@ -36,7 +37,7 @@ public class MeasurementBar : MonoBehaviour
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 50;
-        var scaler = canvasGo.AddComponent<CanvasScaler>();
+        scaler = canvasGo.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920, 1080);
         scaler.matchWidthOrHeight = 0.5F;
@@ -98,6 +99,13 @@ public class MeasurementBar : MonoBehaviour
 
     void Update()
     {
+        // Display 1 text size (StudyLayout.TextScale): a smaller reference resolution = everything on the bar bigger.
+        // StudyLayout.BarHeight uses the same factor, so the driver view still starts just above the bar.
+        if (scaler != null)
+        {
+            var want = new Vector2(1920F, 1080F) / StudyLayout.TextScale;
+            if (scaler.referenceResolution != want) scaler.referenceResolution = want;
+        }
         var sm = StudyManager.Instance;
         bool visible = sm != null &&
             (sm.CurrentState == StudyManager.State.Running || sm.CurrentState == StudyManager.State.Paused);
