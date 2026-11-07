@@ -45,8 +45,9 @@ using UnityEngine.InputSystem;
 //   phase-1 drive / dig steps ALSO show the hold (progress) bar at the bottom centre of the driver view on
 //   Display 1, just above the status bar, with the green line "Correct - keep holding" while the input is right.
 //
-// A control step (phase 1) counts as learned when the CORRECT control has been held for HoldFor(step) seconds
-// in total - it does not have to be in one go. Wrong-mode or wrong-stick input is not counted.
+// A control step (phase 1) advances when the participant presses the OK button (AdvanceWithOK, 2026-11-07); the
+// diagrams show a yellow ARROW for the way to move each stick. Held / wrong-input time is still logged.
+// (AdvanceWithOK = false: the old rule - the CORRECT control held for HoldFor(step) seconds, with a hold bar.)
 // The instructions are drawn on the INSTRUCTION DISPLAY (Display 2 by default, StudyLayout.InstructionDisplayIndex,
 // see InstructionDisplay.cs) as a centred column. Without that display they are drawn in the right-hand part of
 // Display 1 (StudyLayout.GuidePanel), over the driver view. The yellow outlines of the info pages always mark
@@ -73,6 +74,12 @@ public class PracticeGuide : MonoBehaviour
     // StudyLayout.GuidePanel) even when an instruction display exists; the task briefings stay there.
     // true = on the instruction display (Display 2), as before 2026-11-06.
     public static bool OnInstructionDisplay = false;
+    // 2026-11-07: phase 1 control steps (drive / dig) advance only when the participant presses the OK button
+    // (confirm button), so they can practise the control as long as they like. No hold bar. The OK press counts
+    // from ControlMinSeconds after the step starts (a press meant for the previous page does not skip it).
+    // Mode steps still advance by themselves when the mode is switched. false = previous behaviour (hold bar).
+    public static bool AdvanceWithOK = true;
+    public static float ControlMinSeconds = 1.5F;
     public static float HoldSeconds = 2F;         // DEFAULT correct input needed per control step
 
     // HOLD TIME PER STEP (seconds). Steps listed here use this time instead of HoldSeconds.
@@ -448,7 +455,8 @@ public class PracticeGuide : MonoBehaviour
         var st = steps[index];
         bool next = StickControls.ConfirmPressed() || (kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame));
         bool readyInfo = st.kind == Kind.Info && SM.TrialTime - st.startedAt >= InfoMinSeconds;
-        if (readyInfo && next) CompleteStep();
+        bool readyControl = AdvanceWithOK && (st.kind == Kind.Drive || st.kind == Kind.Dig) && ControlReady(st);
+        if ((readyInfo || readyControl) && next) CompleteStep();
     }
 
     void FixedUpdate()
@@ -487,8 +495,10 @@ public class PracticeGuide : MonoBehaviour
         wrongStreak = !lastOk && !lastNear && (input.Any || !rightMode) ? wrongStreak + Time.fixedDeltaTime : 0F;
         if (lastOk) s.held += Time.fixedDeltaTime;
         else if (input.Any && !grace && !lastNear) s.wrong += Time.fixedDeltaTime;
-        if (s.held >= HoldFor(s.id)) CompleteStep();
+        if (!AdvanceWithOK && s.held >= HoldFor(s.id)) CompleteStep();   // with AdvanceWithOK: OK button (Update)
     }
+
+    bool ControlReady(Step st) => SM.TrialTime - st.startedAt >= ControlMinSeconds;
 
     void CompleteStep()
     {
@@ -635,7 +645,7 @@ public class PracticeGuide : MonoBehaviour
             }
         }
         DrawInfoOutline();                         // always on Display 1 (marks a part of the driver screen)
-        if (OnInstructionDisplay && InstructionDisplay.Active && ShowProgressInDriverView) DrawDriverProgress();
+        if (OnInstructionDisplay && InstructionDisplay.Active && ShowProgressInDriverView && !AdvanceWithOK) DrawDriverProgress();
     }
 
     GUIStyle dvOk, noteStyle;
@@ -780,11 +790,30 @@ public class PracticeGuide : MonoBehaviour
         }
         bool stickStep = s.kind == Kind.Drive || s.kind == Kind.Dig;
         // Keyboard keys (s.keys) are not shown: the study uses the gamepad only.
-        if (stickStep) GUI.Label(new Rect(x, y, w, 24 * k), "Yellow = target,  white dot = your stick", small);
+        if (stickStep) GUI.Label(new Rect(x, y, w, 24 * k), "Yellow arrow = move the stick this way,  white dot = your stick", small);
         y += 34 * k;
 
-        // Hold bar.
-        if (stickStep)
+        if (stickStep && AdvanceWithOK)
+        {
+            // Feedback line, then "Press the OK button to continue" at the bottom of the panel (as on the info pages).
+            bool showWrongOk = SM.TrialTime - s.startedAt >= HintGraceSeconds && wrongStreak >= WrongBeforeHint;
+            string hOk = lastOk || lastNear ? "Correct - practise as long as you like."
+                       : !showWrongOk ? ""
+                       : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. {StickControls.Cap(StickControls.ModeSwitch)} to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
+                       : "Not quite - move the stick the way the arrow points.";
+            hint.normal.textColor = lastOk || lastNear ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
+            GUI.Label(new Rect(x, y, w, 60 * k), hOk, hint);
+
+            bool ready = ControlReady(s);
+            float bs = 54F * k, by = Mathf.Max(y + 64F * k, r.yMax - bs - 24F * k);
+            float bw = ButtonBoxWidth(bs, k);
+            var a = new Rect(x, by, bw, bs);
+            Fill(a, ready ? new Color(0.2F, 0.7F, 0.25F) : new Color(0.3F, 0.3F, 0.32F));
+            GUI.Label(a, StickControls.ConfirmBox, bigCenter);
+            string cont = StickControls.Active ? $"Press the {StickControls.ConfirmName} to continue" : "Press A to continue";
+            GUI.Label(new Rect(x + bw + 16F * k, by, w - bw - 16F * k, bs), cont, title);
+        }
+        else if (stickStep)   // previous behaviour: hold bar
         {
             float need = HoldFor(s.id);
             GUI.Label(new Rect(x, y, w, 26 * k), "Hold the correct control until the bar is full", body);
@@ -801,7 +830,7 @@ public class PracticeGuide : MonoBehaviour
                      : lastNear ? "Right control - keep going."
                      : !showWrong ? ""
                      : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. {StickControls.Cap(StickControls.ModeSwitch)} to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
-                     : "Not quite - move the white dot onto the yellow target.";
+                     : "Not quite - move the stick the way the arrow points.";
             hint.normal.textColor = lastOk || lastNear ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
             GUI.Label(new Rect(x, y, w, 60 * k), h, hint);
         }
@@ -962,14 +991,14 @@ public class PracticeGuide : MonoBehaviour
 
         if (s.twist1 != 0F)
         {
-            // Twist bar: yellow target at the end to twist to, white dot = current twist.
+            // Twist bar: yellow arrow = the way to twist, white dot = current twist.
             GUI.Label(new Rect(x, y, w, 20 * k), "TWIST THE GRIP", center);
             var bar = new Rect(x, y + 26 * k, w, 44 * k);
             Fill(bar, new Color(0.16F, 0.17F, 0.19F));
             Fill(new Rect(bar.center.x - 1, bar.y, 2, bar.height), new Color(0.32F, 0.33F, 0.35F));
             float half = bar.width / 2F - 18F * k;
-            float ts = 30F * k, tx = bar.center.x + Mathf.Sign(s.twist1) * half;
-            Fill(new Rect(tx - ts / 2, bar.center.y - ts / 2, ts, ts), new Color(1F, 0.8F, 0.1F, 0.9F));
+            float tx = bar.center.x + Mathf.Sign(s.twist1) * half;
+            Arrow(bar.center, new Vector2(tx, bar.center.y), 9F * k, 22F * k, new Color(1F, 0.8F, 0.1F, 0.95F));
             GUI.Label(new Rect(bar.x + 6 * k, bar.yMax + 2 * k, 120 * k, 20 * k), "< left", small);
             GUI.Label(new Rect(bar.xMax - 60 * k, bar.yMax + 2 * k, 60 * k, 20 * k), "right >", small);
             float cs = 14F * k, cx = bar.center.x + Mathf.Clamp(tw, -1F, 1F) * half;
@@ -1015,15 +1044,40 @@ public class PracticeGuide : MonoBehaviour
         Vector2 P(Vector2 v) => new Vector2(r.center.x + v.x * rad, r.center.y - v.y * rad);   // stick up = screen up
 
         bool idle = target == Vector2.zero;
-        Vector2 tp = P(target);
-        float ts = (idle ? 22F : 30F) * k;
-        Color tc = idle ? new Color(0.6F, 0.6F, 0.62F, 0.8F) : new Color(1F, 0.8F, 0.1F, 0.9F);
-        Fill(new Rect(tp.x - ts / 2, tp.y - ts / 2, ts, ts), tc);
-        if (idle) GUI.Label(new Rect(r.x, r.yMax - 22 * k, r.width, 20 * k), "keep centred", center);
+        if (idle)
+        {
+            float ts = 22F * k;
+            Fill(new Rect(r.center.x - ts / 2, r.center.y - ts / 2, ts, ts), new Color(0.6F, 0.6F, 0.62F, 0.8F));
+            GUI.Label(new Rect(r.x, r.yMax - 22 * k, r.width, 20 * k), "keep centred", center);
+        }
+        else Arrow(r.center, P(target.normalized * 0.95F), 9F * k, 24F * k, new Color(1F, 0.8F, 0.1F, 0.95F));
 
         Vector2 cp = P(new Vector2(Mathf.Clamp(cur.x, -1, 1), Mathf.Clamp(cur.y, -1, 1)));
         float cs = 14F * k;
         Fill(new Rect(cp.x - cs / 2, cp.y - cs / 2, cs, cs), lastOk ? new Color(0.3F, 1F, 0.4F) : Color.white);
+    }
+
+    // A thick arrow from 'from' to 'tip' (GUI coordinates): shaft + two head strokes.
+    static void Arrow(Vector2 from, Vector2 tip, float width, float head, Color c)
+    {
+        Vector2 d = tip - from;
+        if (d.magnitude < 1F) return;
+        Vector2 dir = d.normalized, n = new Vector2(-dir.y, dir.x);
+        Seg(from, tip - dir * width * 0.5F, width, c);
+        Vector2 back = tip - dir * head;
+        Seg(back + n * head * 0.7F, tip, width, c);
+        Seg(back - n * head * 0.7F, tip, width, c);
+    }
+
+    static void Seg(Vector2 a, Vector2 b, float width, Color c)
+    {
+        float len = (b - a).magnitude, ang = Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg;
+        var m = GUI.matrix;
+        var old = GUI.color; GUI.color = c;
+        GUIUtility.RotateAroundPivot(ang, a);
+        GUI.DrawTexture(new Rect(a.x, a.y - width / 2F, len, width), Texture2D.whiteTexture);
+        GUI.matrix = m;
+        GUI.color = old;
     }
 
     static void Fill(Rect r, Color c)
