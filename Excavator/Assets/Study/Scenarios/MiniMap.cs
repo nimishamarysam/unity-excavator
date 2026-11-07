@@ -137,7 +137,7 @@ public class MiniMap
         float len = (b - a).magnitude, ang = Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg;
         var m = GUI.matrix;
         GUI.color = c;
-        GUIUtility.RotateAroundPivot(ang, a);
+        GUI.matrix = m * Matrix4x4.TRS(a, Quaternion.Euler(0F, 0F, ang), Vector3.one) * Matrix4x4.TRS(-a, Quaternion.identity, Vector3.one);   // rotate about a, in the CURRENT GUI space (RotateAroundPivot is wrong under a scaled GUI.matrix)
         GUI.DrawTexture(new Rect(a.x, a.y - width / 2F, len, width), Texture2D.whiteTexture);
         GUI.matrix = m;
     }
@@ -189,15 +189,33 @@ public class MiniMap
         if (labelStyle == null) labelStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow };
         labelStyle.fontSize = FontSize;
 
-        // Where the "YOU" label will be (drawn last). A fixed label (DIG, DUMP) that would overlap it is not drawn,
-        // so the two never print on top of each other (e.g. "YOU" over "DIG" while the machine is at the DIG box).
-        Rect youText = new Rect(-9999F, -9999F, 0F, 0F);
-        if (Here != null)
-        {
-            Vector2 hc = HereOnMap(Screen(Here()), r);
-            Vector2 ys = labelStyle.CalcSize(new GUIContent("YOU"));
-            youText = new Rect(hc.x - ys.x / 2F, hc.y - 9F - FontSize * 1.6F + FontSize - ys.y / 2F, ys.x, ys.y);
-        }
+        // Text boxes of the fixed labels (DIG, DUMP). They are always drawn; the "YOU" label (drawn last) picks a free
+        // place around the dot instead (2026-11-07: before, a fixed label was hidden under "YOU", and "YOU" could be
+        // drawn outside the small task-panel map, on top of the panel text).
+        // A fixed label that the "you are here" dot would cover moves aside (above the dot, else left or right of it),
+        // so the dot never hides DIG / DUMP while the machine stands in that box.
+        Rect dotRect = new Rect(-9999F, -9999F, 0F, 0F);
+        if (Here != null) { Vector2 dc = HereOnMap(Screen(Here()), r); dotRect = new Rect(dc.x - 9F, dc.y - 9F, 18F, 18F); }
+        var fixedLabels = new List<Rect>();
+        foreach (var it in Items)
+            if (it.kind == Kind.Label)
+            {
+                Vector2 lc = Screen(it.a), ls = labelStyle.CalcSize(new GUIContent(it.text));
+                var lr = new Rect(lc.x - ls.x / 2F, lc.y - ls.y / 2F, ls.x, ls.y);
+                if (lr.Overlaps(dotRect))
+                {
+                    Rect[] alt =
+                    {
+                        new Rect(dotRect.center.x - ls.x / 2F, dotRect.yMin - 2F - ls.y, ls.x, ls.y),    // above the dot
+                        new Rect(dotRect.xMin - 3F - ls.x, dotRect.center.y - ls.y / 2F, ls.x, ls.y),    // left of it
+                        new Rect(dotRect.xMax + 3F, dotRect.center.y - ls.y / 2F, ls.x, ls.y),           // right of it
+                    };
+                    foreach (var a in alt)
+                        if (a.xMin >= r.xMin && a.xMax <= r.xMax && a.yMin >= r.yMin && a.yMax <= r.yMax) { lr = a; break; }
+                }
+                fixedLabels.Add(lr);
+            }
+        int labelIndex = 0;
 
         foreach (var it in Items)
         {
@@ -226,7 +244,7 @@ public class MiniMap
                     Vector2 a = Screen(it.a), b = Screen(it.b);
                     float len = (b - a).magnitude, ang = Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg;
                     var m = GUI.matrix;
-                    GUIUtility.RotateAroundPivot(ang, a);
+                    GUI.matrix = m * Matrix4x4.TRS(a, Quaternion.Euler(0F, 0F, ang), Vector3.one) * Matrix4x4.TRS(-a, Quaternion.identity, Vector3.one);   // rotate about a, in the CURRENT GUI space (RotateAroundPivot is wrong under a scaled GUI.matrix)
                     GUI.DrawTexture(new Rect(a.x, a.y - LineWidth / 2F, len, LineWidth), Texture2D.whiteTexture);
                     GUI.matrix = m;
                     // round joints
@@ -243,13 +261,10 @@ public class MiniMap
                 }
                 case Kind.Label:
                 {
-                    Vector2 c = Screen(it.a);
-                    Vector2 ts = labelStyle.CalcSize(new GUIContent(it.text));
-                    var textRect = new Rect(c.x - ts.x / 2F, c.y - ts.y / 2F, ts.x, ts.y);
-                    if (textRect.Overlaps(youText)) break;   // hidden while "YOU" is on top of it
+                    Rect lr = fixedLabels[labelIndex++];   // possibly moved aside for the dot (see above)
                     labelStyle.normal.textColor = it.color;
                     GUI.color = Color.white;
-                    GUI.Label(new Rect(c.x - 80, c.y - FontSize, 160, FontSize * 2), it.text, labelStyle);
+                    GUI.Label(lr, it.text, labelStyle);
                     break;
                 }
             }
@@ -294,9 +309,33 @@ public class MiniMap
             GUI.DrawTexture(new Rect(c.x - 7F, c.y - 7F, 14F, 14F), disc);
             GUI.color = new Color(0.1F, 0.8F, 1F);
             GUI.DrawTexture(new Rect(c.x - 5F, c.y - 5F, 10F, 10F), disc);
-            labelStyle.normal.textColor = Color.white;
-            GUI.color = Color.white;
-            GUI.Label(new Rect(c.x - 80, c.y - 9F - FontSize * 1.6F, 160, FontSize * 2), "YOU", labelStyle);
+            // "YOU": above the dot, else below, right or left - the first place inside the map that covers no fixed
+            // label (DIG / DUMP) and no destination ring. No free place: only the dot.
+            Vector2 ys = labelStyle.CalcSize(new GUIContent("YOU"));
+            float gap = 9F;
+            Vector2[] offsets =
+            {
+                new Vector2(0F, -(gap + ys.y / 2F)), new Vector2(0F, gap + ys.y / 2F),
+                new Vector2(gap + ys.x / 2F, 0F), new Vector2(-(gap + ys.x / 2F), 0F)
+            };
+            var blocked = new List<Rect>(fixedLabels) { dotRect };
+            if (Target != null && (Route == null || (route != null && route.Count > 0)))
+            {
+                Vector2 tc = Screen(Target());
+                blocked.Add(new Rect(tc.x - 12F, tc.y - 12F, 24F, 24F));
+            }
+            foreach (var o in offsets)
+            {
+                var yr = new Rect(c.x + o.x - ys.x / 2F, c.y + o.y - ys.y / 2F, ys.x, ys.y);
+                if (yr.xMin < r.xMin || yr.xMax > r.xMax || yr.yMin < r.yMin || yr.yMax > r.yMax) continue;
+                bool hit = false;
+                foreach (var b in blocked) if (yr.Overlaps(b)) { hit = true; break; }
+                if (hit) continue;
+                labelStyle.normal.textColor = Color.white;
+                GUI.color = Color.white;
+                GUI.Label(yr, "YOU", labelStyle);
+                break;
+            }
         }
         GUI.color = Color.white;
     }

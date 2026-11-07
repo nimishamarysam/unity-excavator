@@ -1127,7 +1127,7 @@ public class PracticeGuide : MonoBehaviour
         float len = (b - a).magnitude, ang = Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg;
         var m = GUI.matrix;
         var old = GUI.color; GUI.color = c;
-        GUIUtility.RotateAroundPivot(ang, a);
+        GUI.matrix = m * Matrix4x4.TRS(a, Quaternion.Euler(0F, 0F, ang), Vector3.one) * Matrix4x4.TRS(-a, Quaternion.identity, Vector3.one);   // rotate about a, in the CURRENT GUI space (RotateAroundPivot is wrong under a scaled GUI.matrix)
         GUI.DrawTexture(new Rect(a.x, a.y - width / 2F, len, width), Texture2D.whiteTexture);
         GUI.matrix = m;
         GUI.color = old;

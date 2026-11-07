@@ -422,6 +422,11 @@ public class DiggingScenario : Scenario
         workerFrom = WorldBuilder.KeepDry(stand + r * (-side) * 12F + f * (!SaVariants ? 4F : Variant == 0 ? 8F : -6F), stand);
         worker = WorldBuilder.Worker(Root, "WorkerAtTrench", workerFrom);
         worker.KeepStops = true;   // always reaches his spot at the trench edge and stays there, even with the bucket near
+        // Variant 1 (from behind): the straight line from behind the machine to the trench edge ran right past the
+        // machine, so he kept dodging the cab / swinging arm (looked random and repetitive). He now walks FORWARD on a
+        // line 12 m out to the side until he is level with his spot, then straight in to the trench edge - and back the
+        // same way (2026-11-07).
+        workerVia = SaVariants && Variant == 1 ? WorldBuilder.KeepDry(stand + r * (-side) * 12F, stand) : (Vector3?)null;
         worker.Hide();
         if (SaVariants)
         {
@@ -501,6 +506,7 @@ public class DiggingScenario : Scenario
     }
 
     Vector3 workerStand, workerFrom;
+    Vector3? workerVia;   // variant 1: walks wide around the machine (level with his spot, 12 m out), then straight in
     // Continuous measures (end-of-trial summary)
     int dumpCount;
     float dumpOffsetSum, dumpOffsetMax, dumpEdgeSum, dumpedM3, spilledM3;
@@ -683,7 +689,9 @@ public class DiggingScenario : Scenario
             workerEvents++;
             Vector3 from = workerFrom;
             worker.Appear(from);
+            if (workerVia.HasValue) worker.WalkTo(workerVia.Value);
             worker.WalkTo(workerStand, WorkerStandSeconds);
+            if (workerVia.HasValue) worker.WalkTo(workerVia.Value);
             worker.WalkTo(from);
             workerUntil = t + 30F;
             StudyLogger.Log("event_start", $"worker_at_trench;n={workerEvents}");
@@ -975,8 +983,10 @@ public class DigDumpScenario : Scenario
         BuildLineMap();
 
         pitWorker = WorldBuilder.Worker(Root, "WorkerPit", pit + left * 12F);
+        pitWorker.KeepStops = true;     // 2026-11-07: always reaches his spot and stays there, even with the machine near
         pitWorker.Hide();
         truckWorker = WorldBuilder.Worker(Root, "WorkerTruck", dumpPos + f * 7F + left * 10F);
+        truckWorker.KeepStops = true;   // (before, a stop next to the machine was skipped - he did not stay)
         truckWorker.Hide();
         if (SaVariants)
         {
@@ -1167,7 +1177,7 @@ public class DigDumpScenario : Scenario
             // lane (+f) and stopped there for good, right in the drive path back to the DIG box.
             Vector3 a = dumpPos - f * 6F + left * off, mid = dumpPos + left * off, b = dumpPos - f * 16F + left * off;
             truckWorker.Appear(a);
-            truckWorker.WalkTo(mid, 8F);   // stands in the swing path for 8 s (was 5 s, and appeared only at 150-230 s)
+            truckWorker.WalkTo(mid, 5F);   // stands in the swing path for 5 s (2026-11-07; was 8 s)
             truckWorker.WalkTo(b);
             truckWorker.HideAtEnd = true;
             StudyLogger.Log("event_start", "worker_in_swing_area_truck");

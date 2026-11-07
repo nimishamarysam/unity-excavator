@@ -307,8 +307,10 @@ public class WorkerWalker : MonoBehaviour
     // that the machine stands on or right next to (within SkipWaypointDistance) is skipped without its waiting time,
     // so he never stands pressed against the machine (e.g. the worker who stops in the reversing path).
     public static float AvoidDistance = 2.0F, SkipWaypointDistance = 3F;
-    // true = this worker never skips a stop because the machine is near it (he still walks around the machine):
-    // used for the Digging trench worker, who must stand at the trench edge on every visit.
+    // true = this worker never skips a stop because the machine is near it, and takes NO detours: next to the machine
+    // he only slides along it (KeepAway) or waits until it moves - like a person waiting for the bucket to move away.
+    // Used for the Digging trench worker, who must stand at the trench edge on every visit (the bucket is often near
+    // there, and detours made him dance back and forth around the trench).
     public bool KeepStops;
     Vector3? detour;
     float bestDist = float.MaxValue, progressAt;
@@ -364,9 +366,9 @@ public class WorkerWalker : MonoBehaviour
 
             // Detour: at once when heading into the machine, or after StuckSeconds without progress next to it.
             float dist = flat.magnitude;
-            bool headingIn = nearMachine && !detour.HasValue && dist > 0.01F && Vector3.Dot(flat / dist, -away) > 0.2F;
+            bool headingIn = !KeepStops && nearMachine && !detour.HasValue && dist > 0.01F && Vector3.Dot(flat / dist, -away) > 0.2F;
             if (!nearMachine || dist < bestDist - 0.25F) { bestDist = Mathf.Min(bestDist, dist); progressAt = Time.time; }
-            if (headingIn || (nearMachine && Time.time - progressAt > StuckSeconds))
+            if (!KeepStops && (headingIn || (nearMachine && Time.time - progressAt > StuckSeconds)))
             {
                 Vector3 n = away;
                 Vector3 t = Vector3.Cross(Vector3.up, n);
