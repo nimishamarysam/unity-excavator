@@ -283,20 +283,20 @@ public class PracticeGuide : MonoBehaviour
         // ---------------- PHASE 2: digging and dumping ----------------
         // Matches BucketLoad: soil enters only while the teeth drag/curl through soil in the dig zone; >= 25 % when
         // leaving the soil = loaded; dump = bucket opened to ~140 deg while >= 0.5 m above the ground.
-        var intro = AddInfo("phase2_intro", "Digging and dumping", Area.None,
-            "Phase 1 is complete.\n\n" +
-            "Now you will dig one bucket of soil and dump it, step by step.\n\n" +
-            "You can dig anywhere in front of the machine and dump anywhere.");
-        intro.phase = 2;
-        intro.redoPhase = 1;
-        intro.onStart = () => { site.BuildDigSite(); ctl.Machine.EnableCuttingEdges(true); };
-
+        // 2026-11-07: no separate intro page (it needed OK) - phase 2 starts directly with its first task, whose text
+        // carries the short introduction. The dig site is built when that step starts the first time in a phase run
+        // (not again when a lost load sends the participant back to it).
         AddTask("dig_in", "Teeth into the ground",
+            "Now dig one bucket of soil and dump it, step by step - anywhere in front of the machine.\n\n" +
             "Reach out with the arm, open the bucket a little, then lower the boom until the teeth are in the ground.",
             () => TeethInSoil,
             () => $"Bucket height: {ctl.Machine.BucketHeightAboveGround:+0.00;-0.00} m",
             null, null, null, null);
-        steps[steps.Count - 1].onStart = () => dumpsAtCycleStart = site.Dumps;
+        steps[steps.Count - 1].onStart = () =>
+        {
+            if (!digSiteReady) { site.BuildDigSite(); ctl.Machine.EnableCuttingEdges(true); digSiteReady = true; }
+            dumpsAtCycleStart = site.Dumps;
+        };
         AddTask("dig_scoop", "Scoop the soil",
             "Pull the arm in and curl the bucket at the same time, dragging the bucket through the soil.",
             () => site.Load.Fill >= 0.6F || site.Load.IsLoaded,
@@ -534,6 +534,8 @@ public class PracticeGuide : MonoBehaviour
     }
 
     // Phase 2: the soil was lost -> back to an earlier step, with a short explanation.
+    bool digSiteReady;   // phase 2 dig site built in this run of the phase (reset when phase 1 or 2 is (re)started)
+
     void GoBack(Step s)
     {
         int to = steps.FindIndex(x => x.id == s.backTo);
@@ -598,6 +600,7 @@ public class PracticeGuide : MonoBehaviour
         if (to < 0) return;
         string from = Done ? "free_practice" : steps[index].id;
         StudyLogger.Log("guide_phase_redo", $"phase={p};by={by};from={from}");
+        if (p <= 2) digSiteReady = false;
         Done = false;
         menu = false;
         repeatOnly = allPhasesDone ? p : 0;   // after the menu: play only this phase, then back to the menu
