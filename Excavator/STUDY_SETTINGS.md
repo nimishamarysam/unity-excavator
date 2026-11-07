@@ -11,7 +11,7 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | What | Setting | Default | File |
 |---|---|---|---|
 | Run the study at all (off = free driving) | `StudyBootstrap.Enabled` (static switch) | `true` | `Study/StudyManager.cs` |
-| Max length of a measured trial | `trialDurationSeconds` | 240 s | `Study/StudyManager.cs` |
+| Max length of a measured trial (Driving, Digging; Dig and dump has its own 6 min limit, `DigDumpScenario.Limit`) | `trialDurationSeconds` | 300 s (2026-11-06; was 240 s) | `Study/StudyManager.cs` |
 | Length of the FREE practice (starts after the guided walkthrough; no time limit during the walkthrough) | `practiceDurationSeconds` | 180 s (participant can end it earlier by holding A) | `Study/StudyManager.cs` |
 | Guided control walkthrough at the start of the practice (phase 1: mode switch, drive fwd/back, turn left/right fwd/back, mode switch, boom/arm/bucket/swing both ways, then 3 info pages - task panel, status bar, incidents - continued with A after `InfoMinSeconds` 3 s) | `PracticeGuide.Enabled` (static switch) | `true` | `Study/Scenarios/PracticeGuide.cs` |
 | Practice phase 2 (guided digging and dumping: teeth in, scoop, lift, swing anywhere and dump, one more alone); NO marked areas - dig zone = square of 2 × (reach + 3 m) around the machine where it stands when phase 2 starts, dump anywhere | `PracticeScenario.BuildDigSite`, `PracticeGuide.BuildSteps` | - | `Study/Scenarios/Scenarios.cs`, `Study/Scenarios/PracticeGuide.cs` |
@@ -20,6 +20,7 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Walkthrough safety cap (walkthrough ends, free practice starts) | `GuideMaxSeconds` | 1200 s | `Study/Scenarios/PracticeGuide.cs` |
 | Walkthrough hint delay: no "not quite" / wrong-mode hint for the first seconds of a step, and only after continuous wrong input | `HintGraceSeconds`, `WrongBeforeHint` | 1.5 s, 0.5 s | `Study/Scenarios/PracticeGuide.cs` |
 | Experimenter: skip the current walkthrough step | gamepad Select/Back or keyboard N | – | `Study/Scenarios/PracticeGuide.cs` |
+| Practice walkthrough instructions on the MAIN display (right-hand panel of Display 1) instead of the instruction display; task briefings, practice/task complete and pause screens stay on the instruction display | `PracticeGuide.OnInstructionDisplay` (static switch) | `false` = main display (2026-11-06) | `Study/Scenarios/PracticeGuide.cs` |
 | Phase 1 hold (progress) bar + green "Correct - keep holding" line also in the driver view (bottom centre, above the status bar), drive / dig steps only - shown while the instructions are on the instruction display | `PracticeGuide.ShowProgressInDriverView` (static switch) | `true` | `Study/Scenarios/PracticeGuide.cs` |
 | Redo a practice phase - experimenter: restart phase 1 / 2 / 3 (phase 3 = its instruction page; timer stops) - only after phases 1-3 were completed once; participants use the "Practice complete" menu | keyboard 1 / 2 / 3 | – | `Study/Scenarios/PracticeGuide.cs` |
 | Phase 3 (free practice) starts with an instruction page; its timer starts only when that page is continued with A | `phase3_intro` step | – | `Study/Scenarios/PracticeGuide.cs` |
@@ -33,6 +34,7 @@ Where each adjustable setting of the excavator study lives. All paths are relati
 | Briefing site map + legend (Digging and Dig and dump) | `DiggingScenario.SiteMap()`, `DigDumpScenario.SiteMap()` (`AddLegend` entries); drawn by `StudyManager.DrawScreen` | – | `Study/Scenarios/Scenarios.cs`, `Study/Scenarios/MiniMap.cs` |
 | "Task complete" screen: how it ended (completed / time ran out / stopped by experimenter), result (`Scenario.ResultText`), time, incidents | `ScreenItems()` → `State.Questionnaire`, `EndTrial` | – | `Study/StudyManager.cs` |
 | Questionnaire screen text | `OnGUI` → `State.Questionnaire` | "Please fill in the questionnaires for this task." (SIM-TLX and SART collected outside the simulator) | `Study/StudyManager.cs` |
+| SA probe variants (for the post-task SAGAT-style questions): each run of a scenario gets variant 0 or 1, the participant's two runs of a scenario always differ, counterbalanced in groups of 4 participants. Changes: Driving - crossing worker from the left / right, 1 / 2 bystanders; Digging - trench worker walks in from the front / from behind, 1 / 2 bystanders; Dig and dump - pit worker front-left / front-right, 1 / 2 bystanders. Correct answers logged as `sa_truth` (and `sa_variant`) in the events CSV; bystander hazard ids start with `Bystander` | `Scenario.SaVariants` (static switch), `Scenario.VariantFor` | `true` (2026-11-06) | `Study/Scenarios/Scenario.cs`, `Study/Scenarios/Scenarios.cs` |
 | Start posture (boom up, arm vertical) | `Scenario.StartRetracted` (static switch) | `true` | `Study/Scenarios/Scenario.cs` |
 
 ## 2. Logging and incident feedback

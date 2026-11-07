@@ -18,6 +18,34 @@ public abstract class Scenario : MonoBehaviour
     protected Transform Root;            // parent of all scenario objects
     protected StudyManager SM => StudyManager.Instance;
 
+    // SA PROBE VARIANTS (2026-11-06, for the post-task SAGAT-style questions).
+    // Every scenario is played twice per participant (C1 and C3) with the same fixed layout, so questions about
+    // fixed things would be answered from memory. Each run therefore gets variant 0 or 1, which changes a few
+    // details that the questions ask about but that do not change the task (see each scenario's "sa_truth" log line):
+    //   Driving:      side the crossing worker comes from; number and side of bystanders (standing workers, far from the route)
+    //   Digging:      direction the worker walks in from (front / behind); number and position of bystanders
+    //   Dig and dump: side of the pit worker (front-left / front-right); number and position of bystanders
+    // The participant's two runs of a scenario always get DIFFERENT variants. Which condition gets which variant is
+    // counterbalanced in groups of 4 participants (P1, P2: C1 = 0, C3 = 1; P3, P4: C1 = 1, C3 = 0; ...), so
+    // variant is not confounded with condition or with order. false = previous behaviour (random / fixed details, no bystanders).
+    public static bool SaVariants = true;
+    protected int Variant { get; private set; }
+    public static int VariantFor(int participantId, StudyCondition c)
+    {
+        int pair = (Mathf.Max(0, participantId - 1) / 2) % 2;
+        return (pair + (c == StudyCondition.C3_AttentionGuided ? 1 : 0)) % 2;
+    }
+
+    // A worker who just stands still (faces 'lookAt'), part of the SA questions ("how many workers ..."). Placed
+    // far from the work area, so no warnings in normal work. Hazard id starts with "bystander" (separate in the analysis).
+    protected WorkerWalker Bystander(string name, Vector3 pos, Vector3 lookAt)
+    {
+        var w = WorldBuilder.Worker(Root, name, pos);
+        Vector3 d = lookAt - w.transform.position; d.y = 0F;
+        if (d.sqrMagnitude > 0.01F) w.transform.rotation = Quaternion.LookRotation(d);
+        return w;
+    }
+
     public abstract string TaskText { get; }
     public virtual string ProgressText => "";
     // Result shown on the "Task complete" screen (e.g. "Truck loads: 3 of 4"); "" = none.
@@ -57,8 +85,10 @@ public abstract class Scenario : MonoBehaviour
         Ctl = ctl; M = ctl.Machine; Trial = trial;
         Rng = new System.Random(trial.seed);
         Root = transform;
+        Variant = SaVariants && SM != null ? VariantFor(SM.ParticipantId, trial.condition) : 0;
         BucketBlocker.Solids.Clear();
         if (StartRetracted) Retract();
+        if (SaVariants && trial.scenario != StudyScenario.Practice) StudyLogger.Log("sa_variant", Variant.ToString());
         Build();
     }
 

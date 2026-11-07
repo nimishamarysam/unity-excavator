@@ -129,6 +129,22 @@ public class DrivingScenario : Scenario
         crosser.Hide();
         behind = WorldBuilder.Worker(Root, "WorkerBehind", new Vector3(23.5F, 0, 9));
         behind.Hide();
+
+        // SA variant: bystanders 11-14 m beside the route (machine faces east: north = LEFT, south = RIGHT).
+        //   variant 0: one, on the left near the start;  variant 1: two, one on the right before gate 2, one on the left after gate 4.
+        if (SaVariants)
+        {
+            string where;
+            if (Variant == 0) { Bystander("Bystander1", new Vector3(-22F, 0, 14F), new Vector3(-22F, 0, 0)); where = "left_near_start"; }
+            else
+            {
+                Bystander("Bystander1", new Vector3(-6F, 0, -14F), new Vector3(-6F, 0, 0));
+                Bystander("Bystander2", new Vector3(37F, 0, 13F), new Vector3(30F, 0, 0));
+                where = "right_before_gate2+left_after_gate4";
+            }
+            int n = Variant == 0 ? 1 : 2;
+            StudyLogger.Log("sa_truth", $"workers_total={2 + n};bystanders={n};bystander_pos={where};crossing_worker_from={(Variant == 0 ? "left" : "right")};behind_worker_from=left");
+        }
     }
 
     protected override void Tick()
@@ -166,7 +182,7 @@ public class DrivingScenario : Scenario
         if (crosserAt > 0 && t >= crosserAt)
         {
             crosserAt = -1F;
-            bool fromNorth = Rng.NextDouble() < 0.5;
+            bool fromNorth = SaVariants ? Variant == 0 : Rng.NextDouble() < 0.5;   // north = left of the driver
             float x = 10.5F + Rand(-1.5F, 1.5F);   // between barrel 2 and gate 3
             crosser.Appear(new Vector3(x, 0, fromNorth ? 13 : -13));
             crosser.WalkTo(new Vector3(x, 0, 0), 3F);
@@ -391,8 +407,27 @@ public class DiggingScenario : Scenario
 
         // Worker: hidden until the event.
         Vector3 stand = trench + r * (-side) * (hw + 1F) + f * Rand(-0.25F, 0.25F) * trenchLen;
-        worker = WorldBuilder.Worker(Root, "WorkerAtTrench", stand + r * (-side) * 12F + f * 4F);
+        // SA variant: the worker walks in from the FRONT (variant 0) or from BEHIND the machine (variant 1), on the
+        // spoil side; without SA variants as before (slightly in front).
+        workerFrom = stand + r * (-side) * 12F + f * (!SaVariants ? 4F : Variant == 0 ? 8F : -6F);
+        worker = WorldBuilder.Worker(Root, "WorkerAtTrench", workerFrom);
         worker.Hide();
+        if (SaVariants)
+        {
+            // Bystanders on the CABLE side (away from the spoil square), more than reach + 5 m from the machine.
+            //   variant 0: one, beside the work box;  variant 1: two, one behind-right/left of the box, one beyond the far end of the trench.
+            string sideName = side > 0F ? "right" : "left";   // r = right of the machine (it faces +f)
+            string where;
+            if (Variant == 0) { Bystander("Bystander1", c0 + r * side * (reach + 5F) + f * 2F, c0); where = $"{sideName}_beside_work_box"; }
+            else
+            {
+                Bystander("Bystander1", c0 + r * side * (reach + 5F) - f * 6F, c0);
+                Bystander("Bystander2", trench + f * (trenchLen / 2F + 7F) + r * side * 3F, c0);
+                where = $"{sideName}_behind_work_box+{sideName}_beyond_trench_end";
+            }
+            int n = Variant == 0 ? 1 : 2;
+            StudyLogger.Log("sa_truth", $"workers_total={1 + n};bystanders={n};bystander_pos={where};trench_worker_from={(Variant == 0 ? "front" : "behind")};trench_worker_side={(side > 0F ? "left" : "right")};cable_side={sideName}");
+        }
         Rng = trialRng;                                       // event timing varies per trial
         workerAtProgress = new float[WorkerAtProgress.Length];
         for (int i = 0; i < workerAtProgress.Length; i++) workerAtProgress[i] = WorkerAtProgress[i] + Rand(-0.05F, 0.05F);
@@ -425,7 +460,7 @@ public class DiggingScenario : Scenario
         PlaceMachine(start.x, start.z, f);
     }
 
-    Vector3 workerStand;
+    Vector3 workerStand, workerFrom;
     // Continuous measures (end-of-trial summary)
     int dumpCount;
     float dumpOffsetSum, dumpOffsetMax, dumpEdgeSum, dumpedM3, spilledM3;
@@ -606,7 +641,7 @@ public class DiggingScenario : Scenario
                 || t >= WorkerLatest[workerEvents]))
         {
             workerEvents++;
-            Vector3 from = workerStand + r * (-side) * 12F + f * 4F;
+            Vector3 from = workerFrom;
             worker.Appear(from);
             worker.WalkTo(workerStand, WorkerStandSeconds);
             worker.WalkTo(from);
@@ -903,6 +938,21 @@ public class DigDumpScenario : Scenario
         pitWorker.Hide();
         truckWorker = WorldBuilder.Worker(Root, "WorkerTruck", dumpPos + f * 7F + left * 10F);
         truckWorker.Hide();
+        if (SaVariants)
+        {
+            // Bystanders, far from the DIG box, the lane and the truck.
+            //   variant 0: one, front-left of the pit;  variant 1: two, front-right of the pit and left of the DIG box.
+            string where;
+            if (Variant == 0) { Bystander("Bystander1", digPos + f * (reach + 7F) + left * 5F, digPos); where = "front_left_of_pit"; }
+            else
+            {
+                Bystander("Bystander1", digPos + f * (reach + 7F) - left * 6F, digPos);
+                Bystander("Bystander2", digPos + left * (reach + 7F), digPos);
+                where = "front_right_of_pit+left_of_dig_box";
+            }
+            int n = Variant == 0 ? 1 : 2;
+            StudyLogger.Log("sa_truth", $"workers_total={2 + n};bystanders={n};bystander_pos={where};pit_worker_side={(Variant == 0 ? "front_left" : "front_right")};truck_worker=between_dump_box_and_truck");
+        }
         pitWorkerAt = Rand(35F, 90F);
         truckWorkerAt = Rand(150F, 230F);
 
@@ -1056,7 +1106,7 @@ public class DigDumpScenario : Scenario
         if (pitWorkerAt > 0F && t >= pitWorkerAt)
         {
             pitWorkerAt = -1F;
-            Vector3 diag = (f + left).normalized;
+            Vector3 diag = (f + (SaVariants && Variant == 1 ? -left : left)).normalized;   // SA variant: front-left / front-right
             Vector3 start = WorldBuilder.OnGround(digPos + diag * (reach + 4F));
             Vector3 inPath = WorldBuilder.OnGround(digPos + diag * (0.55F * reach));
             pitWorker.Appear(start);

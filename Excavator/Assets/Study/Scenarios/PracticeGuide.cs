@@ -69,6 +69,10 @@ public class PracticeGuide : MonoBehaviour
 {
     public static bool Enabled = true;            // false = old practice (free practice only)
     public static bool ShowProgressInDriverView = true;   // phase 1: hold bar in the driver view too
+    // false = the walkthrough instructions are drawn on the MAIN display (Display 1, right-hand panel
+    // StudyLayout.GuidePanel) even when an instruction display exists; the task briefings stay there.
+    // true = on the instruction display (Display 2), as before 2026-11-06.
+    public static bool OnInstructionDisplay = false;
     public static float HoldSeconds = 2F;         // DEFAULT correct input needed per control step
 
     // HOLD TIME PER STEP (seconds). Steps listed here use this time instead of HoldSeconds.
@@ -599,17 +603,39 @@ public class PracticeGuide : MonoBehaviour
     {
         if (SM == null || SM.CurrentState != StudyManager.State.Running || SM.CurrentTrial.index != trialIndex) return;
         GUI.depth = -10;                           // on top of the task panel (for the yellow outlines)
-        if (InstructionDisplay.Begin())
+        if (OnInstructionDisplay && InstructionDisplay.Begin())
         {
             try { DrawPanel(true); }
             finally { InstructionDisplay.End(); }
         }
-        else DrawPanel(false);
+        else
+        {
+            DrawPanel(false);
+            // Instruction display (Display 2) would otherwise be empty during the walkthrough: point to the main screen.
+            if (!OnInstructionDisplay && InstructionDisplay.Begin())
+            {
+                try { DrawInstructionDisplayNote(); }
+                finally { InstructionDisplay.End(); }
+            }
+        }
         DrawInfoOutline();                         // always on Display 1 (marks a part of the driver screen)
-        if (InstructionDisplay.Active && ShowProgressInDriverView) DrawDriverProgress();
+        if (OnInstructionDisplay && InstructionDisplay.Active && ShowProgressInDriverView) DrawDriverProgress();
     }
 
-    GUIStyle dvOk;
+    GUIStyle dvOk, noteStyle;
+
+    // Shown on the instruction display while the walkthrough runs on the main display (OnInstructionDisplay = false).
+    void DrawInstructionDisplayNote()
+    {
+        float k = InstructionDisplay.UiScale, w = InstructionDisplay.Width, h = InstructionDisplay.Height;
+        if (noteStyle == null)
+        {
+            noteStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, wordWrap = true };
+            noteStyle.normal.textColor = Color.white;
+        }
+        noteStyle.fontSize = Mathf.RoundToInt(34 * k);
+        GUI.Label(new Rect(40F * k, 0F, w - 80F * k, h), "PRACTICE\n\nFollow the instructions on the main screen\n(panel on the right).", noteStyle);
+    }
 
     // Phase 1 drive / dig steps: the hold bar at the bottom centre of the driver view (Display 1), just above the
     // status bar - the same bar as on the instruction screen - and, while the correct control is held, the green

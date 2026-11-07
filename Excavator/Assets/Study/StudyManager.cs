@@ -42,7 +42,7 @@ public class StudyManager : MonoBehaviour
     public static event Action<TrialInfo, string> TrialEnded;
 
     [Header("Timing")]
-    public float trialDurationSeconds = 240F;     // max length of a measured trial
+    public float trialDurationSeconds = 300F;     // max length of a measured trial (5 min; was 240 s until 2026-11-06)
     public float practiceDurationSeconds = 180F;  // length of the FREE practice; with the guided walkthrough
                                                   // (PracticeGuide) it starts when the walkthrough is finished
 
