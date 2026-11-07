@@ -16,6 +16,15 @@ public class PracticeScenario : Scenario
 {
     PracticeGuide guide;
     bool siteBuilt;
+    float zoneSize;
+
+    // DIG ANYWHERE (2026-11-07): once digging is on (phase 2 and the free practice), the dig zone moves with the
+    // machine, so wherever the participant drives they can dig - no "digging outside the area" incident in the practice.
+    protected override void Tick()
+    {
+        if (siteBuilt && TerrainDigger.Instance != null)
+            TerrainDigger.Instance.SetZone(WorldBuilder.OnGround(M.SwingCenter), M.ForwardFlat, zoneSize, zoneSize, 1.5F);
+    }
 
     public BucketLoad Load { get; private set; }
     public int Dumps { get; private set; }
@@ -72,7 +81,7 @@ public class PracticeScenario : Scenario
     {
         if (siteBuilt) return;
         siteBuilt = true;
-        float size = 2F * (M.MaxReach + 3F);   // covers everything the bucket can reach, also after a little driving
+        float size = zoneSize = 2F * (M.MaxReach + 3F);   // covers everything the bucket can reach
         M.EnableCuttingEdges(true);            // lets the bucket go into the ground
         TerrainDigger.Instance.SetZone(WorldBuilder.OnGround(M.SwingCenter), M.ForwardFlat, size, size, 1.5F);
 
