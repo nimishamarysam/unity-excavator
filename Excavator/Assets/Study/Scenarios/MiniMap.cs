@@ -151,6 +151,10 @@ public class MiniMap
         Seg(back - n * size * 0.6F, tip, 3F, c);
     }
 
+    // "You are here" position, kept inside the map if the machine is off the mapped area.
+    static Vector2 HereOnMap(Vector2 c, Rect r) =>
+        new Vector2(Mathf.Clamp(c.x, r.x + 6F, r.xMax - 6F), Mathf.Clamp(c.y, r.y + 6F, r.yMax - 6F));
+
     // Draws the map fitted into r (screen pixels).
     public void Draw(Rect r)
     {
@@ -184,6 +188,16 @@ public class MiniMap
 
         if (labelStyle == null) labelStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow };
         labelStyle.fontSize = FontSize;
+
+        // Where the "YOU" label will be (drawn last). A fixed label (DIG, DUMP) that would overlap it is not drawn,
+        // so the two never print on top of each other (e.g. "YOU" over "DIG" while the machine is at the DIG box).
+        Rect youText = new Rect(-9999F, -9999F, 0F, 0F);
+        if (Here != null)
+        {
+            Vector2 hc = HereOnMap(Screen(Here()), r);
+            Vector2 ys = labelStyle.CalcSize(new GUIContent("YOU"));
+            youText = new Rect(hc.x - ys.x / 2F, hc.y - 9F - FontSize * 1.6F + FontSize - ys.y / 2F, ys.x, ys.y);
+        }
 
         foreach (var it in Items)
         {
@@ -230,6 +244,9 @@ public class MiniMap
                 case Kind.Label:
                 {
                     Vector2 c = Screen(it.a);
+                    Vector2 ts = labelStyle.CalcSize(new GUIContent(it.text));
+                    var textRect = new Rect(c.x - ts.x / 2F, c.y - ts.y / 2F, ts.x, ts.y);
+                    if (textRect.Overlaps(youText)) break;   // hidden while "YOU" is on top of it
                     labelStyle.normal.textColor = it.color;
                     GUI.color = Color.white;
                     GUI.Label(new Rect(c.x - 80, c.y - FontSize, 160, FontSize * 2), it.text, labelStyle);
@@ -272,9 +289,7 @@ public class MiniMap
         // You are here: white-rimmed cyan dot (kept inside the map if the machine is off the lane area).
         if (Here != null)
         {
-            Vector2 c = Screen(Here());
-            c.x = Mathf.Clamp(c.x, r.x + 6F, r.xMax - 6F);
-            c.y = Mathf.Clamp(c.y, r.y + 6F, r.yMax - 6F);
+            Vector2 c = HereOnMap(Screen(Here()), r);
             GUI.color = Color.white;
             GUI.DrawTexture(new Rect(c.x - 7F, c.y - 7F, 14F, 14F), disc);
             GUI.color = new Color(0.1F, 0.8F, 1F);

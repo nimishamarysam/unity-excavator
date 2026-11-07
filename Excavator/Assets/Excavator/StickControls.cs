@@ -18,7 +18,7 @@ using UnityEngine.InputSystem.Controls;
 // Joystick buttons (numbers as in Windows "Set up USB game controllers"; change them below if needed):
 //   Trigger (1)        single stick: TAP = DRIVE/DIG mode, HOLD + forward/back = arm
 //                      two sticks:   press + release either trigger = DRIVE/DIG mode
-//   ConfirmButton (2)  = gamepad A: start / continue / hold to finish the practice
+//   ConfirmButton (4, "OK" button) = gamepad A: start / continue / hold to finish the practice
 //   PauseButton (5)    = gamepad Start: pause / resume                 (experimenter)
 //   EndTrialButton (6) = gamepad X: end the current trial early        (experimenter)
 //   SkipStepButton (7) = gamepad Select: skip the current practice step (experimenter)
@@ -40,13 +40,13 @@ public static class StickControls
     // false (default) = they still work alongside the joystick (home testing), but are never mentioned on screen.
     public static bool BlockGamepadKeyboard = false;
 
-    public static int ConfirmButton = 2;
+    public static int ConfirmButton = 4;   // "OK" button (2026-11-07; was 2 = thumb button)
     public static int PauseButton = 5;
     public static int EndTrialButton = 6;
     public static int SkipStepButton = 7;
 
-    // Text used in the instructions for the confirm button (e.g. "thumb button", "button 2").
-    public static string ConfirmName = "thumb button";
+    // Text used in the instructions for the confirm button (e.g. "OK button", "button 2").
+    public static string ConfirmName = "OK button";
     public static string ConfirmShort = "THUMB";
 
     // ---------------- which device is in use ----------------

@@ -98,7 +98,14 @@ public class PracticeGuide : MonoBehaviour
                                                   // first seconds of a step: time to release the old control
     const float WrongBeforeHint = 0.5F;           // wrong input must last this long before the hint appears
     const float GuideMaxSeconds = 1200F;          // safety cap: after 20 min the guide ends anyway
-    const float StickOn = 0.5F;                   // stick deflection that counts as "pushed"
+    // 2026-11-07: small deflections count too, so participants can practise slight, careful movements
+    // (was 0.5 = at least half way). The step still needs the RIGHT control in the right direction.
+    const float StickOn = 0.2F;                   // stick deflection that counts as "pushed" (fills the hold bar)
+    const float StickTouch = 0.05F;               // right control moved at all: never a "Not quite" hint
+    static float on = StickOn;                    // threshold used by the step checks (StickOn, or StickTouch in Near)
+    // Turn steps: the other track must be at least this much less than the driving one (35 %, at least 0.1),
+    // so a slight turn counts as well as a full one.
+    static float TurnGap(float drive) => Mathf.Max(0.1F, TrackDiff * Mathf.Abs(drive));
     const float TrackDiff = 0.35F;                // difference between the two tracks for a turn / allowed for straight
 
     public static PracticeGuide Current { get; private set; }
@@ -139,7 +146,15 @@ public class PracticeGuide : MonoBehaviour
     PracticeScenario site;
     StudyManager SM => StudyManager.Instance;
     int trialIndex;
-    bool lastOk;
+    bool lastOk, lastNear;
+
+    // The step's check with the "moved at all" threshold: the right control is being used, even if only a little.
+    static bool Near(Step s, InputSnapshot input)
+    {
+        on = StickTouch;
+        try { return s.ok(input); }
+        finally { on = StickOn; }
+    }
     float wrongStreak;                            // seconds of continuous wrong input (for the hint delay)
     string backMessage = ""; float backMessageUntil = -1F;
     int dumpsAtStepStart;
@@ -188,27 +203,27 @@ public class PracticeGuide : MonoBehaviour
         AddDrive("drive_fwd", "Drive forward",
             "Push BOTH sticks forward (up) the same amount. Both tracks drive forward.", "Y + U",
             new Vector2(0, 1), new Vector2(0, 1),
-            s => s.trackLeft >= StickOn && s.trackRight >= StickOn && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
+            s => s.trackLeft >= on && s.trackRight >= on && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
         AddDrive("drive_back", "Drive backward",
-            "Pull BOTH sticks back (down) the same amount. Both tracks drive backward.", "R + O",
+            "Pull BOTH sticks back the same amount. Both tracks drive backward.", "R + O",
             new Vector2(0, -1), new Vector2(0, -1),
-            s => s.trackLeft <= -StickOn && s.trackRight <= -StickOn && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
-        AddDrive("turn_left_fwd", "Turn LEFT while driving forward",
+            s => s.trackLeft <= -on && s.trackRight <= -on && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
+        AddDrive("turn_left_fwd", "Turn LEFT",
             "Push only the RIGHT stick forward, keep the left stick in the middle.\nThe right track drives, so the machine turns to the left.", "U",
             new Vector2(0, 0), new Vector2(0, 1),
-            s => s.trackRight >= StickOn && s.trackLeft >= -0.15F && s.trackLeft <= s.trackRight - TrackDiff);
-        AddDrive("turn_right_fwd", "Turn RIGHT while driving forward",
+            s => s.trackRight >= on && s.trackLeft >= -0.15F && s.trackLeft <= s.trackRight - TurnGap(s.trackRight));
+        AddDrive("turn_right_fwd", "Turn RIGHT",
             "Push only the LEFT stick forward, keep the right stick in the middle.\nThe left track drives, so the machine turns to the right.", "Y",
             new Vector2(0, 1), new Vector2(0, 0),
-            s => s.trackLeft >= StickOn && s.trackRight >= -0.15F && s.trackRight <= s.trackLeft - TrackDiff);
-        AddDrive("turn_right_back", "Turn RIGHT while driving backward",
+            s => s.trackLeft >= on && s.trackRight >= -0.15F && s.trackRight <= s.trackLeft - TurnGap(s.trackLeft));
+        AddDrive("turn_right_back", "Turn REAR-RIGHT",
             "Pull only the LEFT stick back, keep the right stick in the middle.\nThe machine reverses and its rear swings to the RIGHT.", "R",
             new Vector2(0, -1), new Vector2(0, 0),
-            s => s.trackLeft <= -StickOn && s.trackRight <= 0.15F && s.trackRight >= s.trackLeft + TrackDiff);
-        AddDrive("turn_left_back", "Turn LEFT while driving backward",
+            s => s.trackLeft <= -on && s.trackRight <= 0.15F && s.trackRight >= s.trackLeft + TurnGap(s.trackLeft));
+        AddDrive("turn_left_back", "Turn REAR-LEFT",
             "Pull only the RIGHT stick back, keep the left stick in the middle.\nThe machine reverses and its rear swings to the LEFT.", "O",
             new Vector2(0, 0), new Vector2(0, -1),
-            s => s.trackRight <= -StickOn && s.trackLeft <= 0.15F && s.trackLeft >= s.trackRight + TrackDiff);
+            s => s.trackRight <= -on && s.trackLeft <= 0.15F && s.trackLeft >= s.trackRight + TurnGap(s.trackRight));
 
         steps.Add(new Step { id = "mode_dig", kind = Kind.ModeDig, title = "Switch to DIG mode",
             how = "Press the B button again.\nMODE in the status bar (bottom) changes to DIG. In DIG mode the sticks move the boom, arm, bucket and cab.",
@@ -229,25 +244,24 @@ public class PracticeGuide : MonoBehaviour
         // Information pages: what is on the screen.
         AddInfo("info_task_panel", "The task panel (top left)", Area.TaskPanel,
             "The panel at the top left (outlined in yellow) describes your current task.\n\n" +
-            "- First line: the goal of the task.\n" +
-            "- Lines below: what to do next and your progress. \n" +
-            "Before each task you also get a short description. During the task, look at this panel whenever you are unsure what to do next.");
+            "- It shows the goal of the task, current progress and next steps.\n" +
+            "During the task, look at this panel whenever you are unsure what to do next.");
         AddInfo("info_status_bar", "The status bar (bottom)", Area.StatusBar,
-            "The dark bar along the bottom of the screen (outlined in yellow) shows the state of the machine as numbers:\n\n" +
+            "The highlighted status bar shows the state of the machine:\n\n" +
             "- MODE: DRIVE or DIG\n" +
             "- SWING: how far the cab is turned (degrees)\n" +
             "- BOOM, ARM, BUCKET: the angle of each part (degrees)\n" +
-            "- BUCKET HEIGHT: height of the bucket teeth above the ground in metres (minus = below the ground, i.e. how deep you dig)\n" +
+            "- BUCKET HEIGHT: height of the bucket teeth above the ground in metres \n" +
             "- BUCKET LOAD: how full the bucket is (%)\n" +
             "- TILT: how much the machine leans (degrees)\n" +
             "- SPEED: driving speed (km/h)\n\n" +
             "Try it: move the boom and watch BOOM and BUCKET HEIGHT change.");
         AddInfo("info_incidents", "Incidents", Area.Incidents,
-            "The bottom line of the task panel (outlined in yellow) counts INCIDENTS. When one happens you hear a short warning buzz, " +
+            "The bottom line of the task panel counts INCIDENTS. When one happens you hear a short warning buzz, " +
             "the counter goes up, and the line turns red for a few seconds and says what happened.\n\n" +
             "These count as incidents:\n" +
-            "- Hitting a worker, an obstacle (barrel, gate post, barrier, fence) or the truck\n" +
-            "- The bucket or arm hitting the truck (cab, side wall, bed floor or chassis)\n" +
+            "- Hitting a worker, an obstacle or the truck\n" +
+            "- The bucket or arm hitting the truck \n" +
             "- Striking a buried cable or pipe\n" +
             "- The boom, arm or bucket touching the power line\n" +
             "- Driving the tracks too close to the edge of the trench\n" +
@@ -260,7 +274,7 @@ public class PracticeGuide : MonoBehaviour
         // Matches BucketLoad: soil enters only while the teeth drag/curl through soil in the dig zone; >= 25 % when
         // leaving the soil = loaded; dump = bucket opened to ~140 deg while >= 0.5 m above the ground.
         var intro = AddInfo("phase2_intro", "Digging and dumping", Area.None,
-            "Phase 1 (basic controls) is complete.\n\n" +
+            "Phase 1 is complete.\n\n" +
             "Now you will dig one bucket of soil and dump it, step by step.\n\n" +
             "You can dig anywhere in front of the machine and dump anywhere.");
         intro.phase = 2;
@@ -368,7 +382,8 @@ public class PracticeGuide : MonoBehaviour
             {
                 float v = axis(s) * sign;
                 float maxOther = Mathf.Max(Mathf.Abs(s.swing), Mathf.Abs(s.boom), Mathf.Abs(s.arm), Mathf.Abs(s.bucket));
-                return v >= StickOn && v >= maxOther - 0.001F;
+                // Fills the bar: the right control is the main one. Near (StickTouch): moved at all, other controls allowed.
+                return v >= on && (on <= StickTouch || v >= maxOther - 0.001F);
             }
         });
     }
@@ -467,10 +482,11 @@ public class PracticeGuide : MonoBehaviour
 
         bool rightMode = (s.kind == Kind.Drive) == ctl.IsTravelMode;
         lastOk = rightMode && s.ok(input);
+        lastNear = !lastOk && rightMode && Near(s, input);   // right control, just very little / with another one
         bool grace = SM.TrialTime - s.startedAt < HintGraceSeconds;
-        wrongStreak = !lastOk && (input.Any || !rightMode) ? wrongStreak + Time.fixedDeltaTime : 0F;
+        wrongStreak = !lastOk && !lastNear && (input.Any || !rightMode) ? wrongStreak + Time.fixedDeltaTime : 0F;
         if (lastOk) s.held += Time.fixedDeltaTime;
-        else if (input.Any && !grace) s.wrong += Time.fixedDeltaTime;
+        else if (input.Any && !grace && !lastNear) s.wrong += Time.fixedDeltaTime;
         if (s.held >= HoldFor(s.id)) CompleteStep();
     }
 
@@ -478,7 +494,7 @@ public class PracticeGuide : MonoBehaviour
     {
         var s = steps[index];
         StudyLogger.Log("guide_step_done", $"{index + 1};{s.id};took={SM.TrialTime - s.startedAt:F1};held={s.held:F1};wrong={s.wrong:F1}");
-        lastOk = false;
+        lastOk = false; lastNear = false;
         NextStep();
     }
 
@@ -577,7 +593,7 @@ public class PracticeGuide : MonoBehaviour
         var s = steps[index];
         s.startedAt = SM.TrialTime;
         s.held = 0F;
-        lastOk = false;
+        lastOk = false; lastNear = false;
         wrongStreak = 0F;
         s.onStart?.Invoke();
         if (site != null) dumpsAtStepStart = site.Dumps;
@@ -782,10 +798,11 @@ public class PracticeGuide : MonoBehaviour
             // so they do not flash up while the previous control is still being released.
             bool showWrong = SM.TrialTime - s.startedAt >= HintGraceSeconds && wrongStreak >= WrongBeforeHint;
             string h = lastOk ? "Correct - keep holding."
+                     : lastNear ? "Right control - keep going."
                      : !showWrong ? ""
                      : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. {StickControls.Cap(StickControls.ModeSwitch)} to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
                      : "Not quite - move the white dot onto the yellow target.";
-            hint.normal.textColor = lastOk ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
+            hint.normal.textColor = lastOk || lastNear ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
             GUI.Label(new Rect(x, y, w, 60 * k), h, hint);
         }
     }

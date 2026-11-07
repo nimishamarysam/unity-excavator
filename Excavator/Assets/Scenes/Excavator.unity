@@ -148,11 +148,11 @@ MonoBehaviour:
   stickLayout: 0
   showFlightStickDebug: 0
   experimenterKeyboard: 1
-  confirmButton: 2
+  confirmButton: 4
   pauseButton: 5
   endTrialButton: 6
   skipStepButton: 7
-  confirmButtonName: thumb button
+  confirmButtonName: OK button
 --- !u!1 &59483821
 GameObject:
   m_ObjectHideFlags: 0

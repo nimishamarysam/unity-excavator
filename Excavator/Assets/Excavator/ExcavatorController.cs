@@ -134,12 +134,12 @@ public class ExcavatorController : MonoBehaviour
     [Tooltip("Only with 'Block Gamepad Keyboard': keep the experimenter keyboard keys (Enter, P, End, N, C calibrate, S swap). They never move the machine.")]
     public bool experimenterKeyboard = true;
     [Tooltip("Joystick button numbers (1 = trigger), as in Windows 'Set up USB game controllers'. Check them with the live overlay ('pressed: ...').")]
-    public int confirmButton = 2;
+    public int confirmButton = 4;      // "OK" button (2026-11-07; was 2 = thumb button)
     public int pauseButton = 5;
     public int endTrialButton = 6;
     public int skipStepButton = 7;
-    [Tooltip("How the instructions name the confirm button, e.g. 'thumb button' or 'button 2'.")]
-    public string confirmButtonName = "thumb button";
+    [Tooltip("How the instructions name the confirm button, e.g. 'OK button' or 'button 2'. The first word is shown in the green button box.")]
+    public string confirmButtonName = "OK button";
     private IExcavatorInput input = new GamepadKeyboardInput();
     public IExcavatorInput InputSource { get => input; set => input = value; }
 

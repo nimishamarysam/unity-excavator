@@ -7,7 +7,7 @@ using UnityEngine.InputSystem;
 // 21-step scale from "Very low" (0) to "Very high" (20). Filled in by the participant with the same controls
 // they drive with - no mouse is needed (the instruction display cannot take mouse clicks):
 //   Joystick: hat up/down = choose the question, stick or hat left/right = set the rating,
-//             thumb button (confirm) = next question / submit.
+//             OK button (confirm, joystick button 4) = next question / submit.
 //   Gamepad:  D-pad up/down, left stick or D-pad left/right, A.     Keyboard (testing): arrow keys.
 // Every question must be rated (moved at least once) before the form can be submitted. Results go to the
 // events log ("sim_tlx") and to P01_<date>_questionnaire.csv (raw 0-20 values, plus the mean).
