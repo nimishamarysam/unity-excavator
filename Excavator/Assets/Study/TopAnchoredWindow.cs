@@ -59,6 +59,7 @@ public class TopAnchoredWindow : MonoBehaviour
     int monX, monY, monW = 1920, monH = 1080;   // monitor of the window (desktop pixels)
     bool showGrid;
     Coroutine applying;
+    float applyAt = -1F;           // calibration: apply this long after the last key press (no flicker while holding keys)
 
     // Top-left corner of the window for a monitor with the given position and size.
     Vector2Int Corner(int x0, int y0, int w, int h)
@@ -123,9 +124,9 @@ public class TopAnchoredWindow : MonoBehaviour
         Screen.SetResolution(WindowWidth, WindowHeight, FullScreenMode.Windowed);
         yield return null;                       // let Unity resize the window first
         yield return null;
-        Place();
+        Place(true);
         yield return new WaitForSecondsRealtime(0.5F);
-        Place();                                 // once more, in case Unity re-applied its own style
+        Place(true);                             // once more, in case Unity re-applied its own style
         applying = null;
     }
 
@@ -159,7 +160,7 @@ public class TopAnchoredWindow : MonoBehaviour
             PlayerPrefs.DeleteKey(PrefX); PlayerPrefs.DeleteKey(PrefY); PlayerPrefs.DeleteKey(PrefW); PlayerPrefs.DeleteKey(PrefH);
             var c = Corner(monX, monY, monW, monH);
             Anchor = WindowAnchor.Custom; CustomX = c.x - monX; CustomY = c.y - monY;
-            Apply();
+            applyAt = Time.unscaledTime;
             return;
         }
 
@@ -177,7 +178,31 @@ public class TopAnchoredWindow : MonoBehaviour
             WindowHeight = Mathf.Max(MinHeight, WindowHeight + dy);
         }
         else { CustomX += dx; CustomY += dy; }
-        Apply();
+        applyAt = Time.unscaledTime + 0.15F;
+    }
+
+    void LateUpdate()
+    {
+        if (applyAt < 0F || Time.unscaledTime < applyAt) return;
+        applyAt = -1F;
+        if (applying != null) StopCoroutine(applying);
+        applying = StartCoroutine(MoveRoutine());
+    }
+
+    // Calibration step: move / resize the existing window directly (no display reset, so no blinking).
+    // Only if Unity has not taken over the new size after a few frames is the resolution set as well.
+    IEnumerator MoveRoutine()
+    {
+        Place(false);
+        for (int i = 0; i < 5; i++) yield return null;
+        if (Screen.width != WindowWidth || Screen.height != WindowHeight)
+        {
+            Screen.SetResolution(WindowWidth, WindowHeight, FullScreenMode.Windowed);
+            yield return null;
+            yield return null;
+            Place(false);
+        }
+        applying = null;
     }
 
     void Save()
@@ -189,6 +214,8 @@ public class TopAnchoredWindow : MonoBehaviour
     }
 
     GUIStyle infoStyle;
+    RectInt lastRect;
+    bool hwndFound;
 
     void OnGUI()
     {
@@ -210,15 +237,16 @@ public class TopAnchoredWindow : MonoBehaviour
         Fill(new Rect(w / 2F - 30F, h / 2F - 1.5F, 60F, 3F), frame);   // centre cross
         Fill(new Rect(w / 2F - 1.5F, h / 2F - 30F, 3F, 60F), frame);
 
-        if (infoStyle == null) infoStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 18, wordWrap = true };
+        if (infoStyle == null) infoStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 18, wordWrap = true, richText = true };
         infoStyle.normal.textColor = Color.white;
-        var r = new Rect(w / 2F - 330F, h / 2F + 40F, 660F, 150F);
+        var r = new Rect(w / 2F - 340F, h / 2F + 40F, 680F, 175F);
         Fill(r, new Color(0F, 0F, 0F, 0.8F));
         GUI.Label(r,
             "WINDOW CALIBRATION - fit the yellow frame to the flat part of the screen\n" +
             $"Position {CustomX}, {CustomY}   Size {WindowWidth} x {WindowHeight}   (monitor {monW} x {monH})\n" +
             "Arrows: move (Shift 50 px, Alt 1 px)   Ctrl + Arrows: size\n" +
-            "G: grid   Backspace: defaults   F8: SAVE and close", infoStyle);
+            "G: grid   Backspace: defaults   F8: SAVE and close\n" +
+            $"<size=13>check: window {lastRect.width} x {lastRect.height} at ({lastRect.x}, {lastRect.y}), screen {Screen.width} x {Screen.height}, handle {(hwndFound ? "ok" : "NOT FOUND")}</size>", infoStyle);
     }
 
     static void Fill(Rect r, Color c)
@@ -236,6 +264,9 @@ public class TopAnchoredWindow : MonoBehaviour
     [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public uint dwFlags; }
 
     [DllImport("user32.dll")] static extern IntPtr GetActiveWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
@@ -246,10 +277,31 @@ public class TopAnchoredWindow : MonoBehaviour
     const uint SWP_SHOWWINDOW = 0x0040, SWP_FRAMECHANGED = 0x0020;
     const uint MONITOR_DEFAULTTOPRIMARY = 1;
 
-    void Place()
+    IntPtr hwnd;
+
+    // The player window: found once and kept (GetActiveWindow can be empty right after a resolution change).
+    IntPtr Handle()
     {
-        IntPtr hwnd = GetActiveWindow();
-        if (hwnd == IntPtr.Zero) { Debug.LogWarning("[TopAnchoredWindow] Window handle not found (application not in focus?)"); return; }
+        if (hwnd != IntPtr.Zero) return hwnd;
+        IntPtr h = GetActiveWindow();
+        if (h == IntPtr.Zero)
+        {
+            h = FindWindow("UnityWndClass", null);
+            if (h != IntPtr.Zero)
+            {
+                GetWindowThreadProcessId(h, out uint pid);
+                if (pid != (uint)System.Diagnostics.Process.GetCurrentProcess().Id) h = IntPtr.Zero;
+            }
+        }
+        hwnd = h;
+        return hwnd;
+    }
+
+    void Place(bool setStyle)
+    {
+        IntPtr hwnd = Handle();
+        hwndFound = hwnd != IntPtr.Zero;
+        if (!hwndFound) { Debug.LogWarning("[TopAnchoredWindow] Window handle not found (application not in focus?)"); return; }
 
         // Position on the monitor the window is on (Display 1), according to Anchor.
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
@@ -260,11 +312,14 @@ public class TopAnchoredWindow : MonoBehaviour
         }
         var c = Corner(monX, monY, monW, monH);
 
-        SetWindowLongPtr(hwnd, GWL_STYLE, new IntPtr(WS_POPUP | WS_VISIBLE));   // no title bar, no border
-        SetWindowPos(hwnd, IntPtr.Zero, c.x, c.y, WindowWidth, WindowHeight, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        if (setStyle) SetWindowLongPtr(hwnd, GWL_STYLE, new IntPtr(WS_POPUP | WS_VISIBLE));   // no title bar, no border
+        bool ok = SetWindowPos(hwnd, IntPtr.Zero, c.x, c.y, WindowWidth, WindowHeight, (setStyle ? SWP_FRAMECHANGED : 0u) | SWP_SHOWWINDOW);
+        if (GetWindowRect(hwnd, out RECT r)) lastRect = new RectInt(r.left - monX, r.top - monY, r.right - r.left, r.bottom - r.top);
+        if (!ok) Debug.LogWarning($"[TopAnchoredWindow] SetWindowPos failed (error {Marshal.GetLastWin32Error()})");
+        Debug.Log($"[TopAnchoredWindow] Placed: wanted {WindowWidth} x {WindowHeight} at ({c.x - monX}, {c.y - monY}), got {lastRect.width} x {lastRect.height} at ({lastRect.x}, {lastRect.y}); screen {Screen.width} x {Screen.height}");
     }
 #else
-    void Place()
+    void Place(bool setStyle)
     {
         // Other platforms: move the window (position relative to the display); the border cannot be removed from here.
         var d = Screen.mainWindowDisplayInfo;
