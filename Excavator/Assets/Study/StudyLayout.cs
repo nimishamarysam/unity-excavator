@@ -28,7 +28,7 @@ using UnityEngine;
 // ONE DISPLAY (default now: ContextViewsOnSeparateDisplay = false, or a build with fewer than 5 displays connected):
 //   the previous layout - driver view on the left, the camera windows stacked in a panel on the right.
 //
-// Display 1 in a build: a borderless 1920 x 720 window pinned to the top of the monitor (TopAnchoredWindow.cs),
+// Display 1 in a build: a borderless window (default 1920 x 720; position and size adjustable with F8, see TopAnchoredWindow.cs),
 // so the layout above fills that window, not the whole monitor.
 // Display numbers: Unity counts from 0, so "Display 1" = 0 and "Display 5" = 4.
 // In the Editor: open a second Game view and set it to "Display 5" to see the context views.
