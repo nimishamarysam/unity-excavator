@@ -33,6 +33,32 @@ public static class WorldBuilder
     public static float Ground(float x, float z) => TerrainDigger.ReferenceGroundHeight(new Vector3(x, 0, z));
     public static Vector3 OnGround(Vector3 p, float lift = 0F) { p.y = Ground(p.x, p.z) + lift; return p; }
 
+    // RIVER (2026-11-07): workers must never stand or walk in the water. WaterLevel = height of the scene's "River"
+    // plane (no river = no limit). KeepDry moves a point along the line towards 'toward' until the ground there is
+    // above the water (+ ShoreMargin metres further inland), so a worker placed or sent too far north stays on the bank.
+    static float? waterLevel;
+    public const float ShoreMargin = 1.5F;
+    public static float WaterLevel
+    {
+        get
+        {
+            if (waterLevel == null) { var r = GameObject.Find("River"); waterLevel = r != null ? r.transform.position.y : float.NegativeInfinity; }
+            return waterLevel.Value;
+        }
+    }
+    public static bool IsDry(Vector3 p) => Ground(p.x, p.z) > WaterLevel + 0.1F;
+    public static Vector3 KeepDry(Vector3 p, Vector3 toward)
+    {
+        if (float.IsNegativeInfinity(WaterLevel) || IsDry(p)) return p;
+        Vector3 d = toward - p; d.y = 0F;
+        float len = d.magnitude;
+        if (len < 0.01F) return p;
+        d /= len;
+        for (float s = 0.5F; s <= len; s += 0.5F)
+            if (IsDry(p + d * s)) return p + d * Mathf.Min(len, s + ShoreMargin);
+        return toward;
+    }
+
     public static GameObject Shape(PrimitiveType type, Transform parent, string name, Vector3 groundPos, Vector3 size,
                                    Color color, float yaw = 0F, bool solid = true, float lift = -1F)
     {
@@ -271,6 +297,18 @@ public class WorkerWalker : MonoBehaviour
     public bool HideAtEnd;
     readonly Queue<(Vector3 pos, float wait)> route = new Queue<(Vector3, float)>();
     float waitUntil, phase, swing;
+    // STUCK AT THE MACHINE (2026-11-07): sliding along the machine can end in a corner (e.g. the machine stands
+    // across his path). If he gets no closer to his goal for StuckSeconds while next to the machine, he takes a
+    // DETOUR point: a step away from the machine and DetourStep metres along it, on the side of his goal, then
+    // carries on. Repeated as often as needed.
+    public static float StuckSeconds = 0.5F, DetourStep = 4F;
+    // 2026-11-07 (second fix): he steers around the machine BEFORE he touches it - as soon as he is within
+    // AvoidDistance of it and his next step goes towards it, he takes the detour at once (no waiting). A waypoint
+    // that the machine stands on or right next to (within SkipWaypointDistance) is skipped without its waiting time,
+    // so he never stands pressed against the machine (e.g. the worker who stops in the reversing path).
+    public static float AvoidDistance = 2.0F, SkipWaypointDistance = 3F;
+    Vector3? detour;
+    float bestDist = float.MaxValue, progressAt;
     Hazard hazard;
     Transform legL, legR, armL, armR;
 
@@ -294,10 +332,48 @@ public class WorkerWalker : MonoBehaviour
         bool walking = false;
         if (route.Count > 0 && Time.time >= waitUntil)
         {
-            var (target, wait) = route.Peek();
+            var (routeTarget, wait) = route.Peek();
+            Vector3 target = detour ?? routeTarget;
             Vector3 pos = transform.position;
             Vector3 flat = new Vector3(target.x - pos.x, 0, target.z - pos.z);
             float step = speed * Time.deltaTime;
+
+            bool machineOn = hazard != null && hazard.active;
+            bool nearMachine = machineOn && hazard.CurrentDistance < AvoidDistance;
+            Vector3 away = Vector3.zero;
+            if (machineOn) { away = pos - hazard.MachinePoint; away.y = 0F; away = away.sqrMagnitude > 1e-4F ? away.normalized : -transform.forward; }
+
+            // Waypoint blocked by the machine: skip it (and its waiting time) instead of standing against the machine.
+            if (nearMachine && !detour.HasValue)
+            {
+                Vector3 toWp = new Vector3(routeTarget.x - pos.x, 0, routeTarget.z - pos.z);
+                Vector3 wpToMachine = new Vector3(hazard.MachinePoint.x - routeTarget.x, 0, hazard.MachinePoint.z - routeTarget.z);
+                if (toWp.magnitude < SkipWaypointDistance || wpToMachine.magnitude < KeepAway + 0.5F)
+                {
+                    route.Dequeue();
+                    waitUntil = Time.time;
+                    bestDist = float.MaxValue; progressAt = Time.time;
+                    if (route.Count == 0 && HideAtEnd) { HideAtEnd = false; Hide(); return; }
+                    Animate(false);
+                    return;
+                }
+            }
+
+            // Detour: at once when heading into the machine, or after StuckSeconds without progress next to it.
+            float dist = flat.magnitude;
+            bool headingIn = nearMachine && !detour.HasValue && dist > 0.01F && Vector3.Dot(flat / dist, -away) > 0.2F;
+            if (!nearMachine || dist < bestDist - 0.25F) { bestDist = Mathf.Min(bestDist, dist); progressAt = Time.time; }
+            if (headingIn || (nearMachine && Time.time - progressAt > StuckSeconds))
+            {
+                Vector3 n = away;
+                Vector3 t = Vector3.Cross(Vector3.up, n);
+                Vector3 toGoal = new Vector3(routeTarget.x - pos.x, 0, routeTarget.z - pos.z);
+                if (Vector3.Dot(t, toGoal) < 0F) t = -t;
+                detour = WorldBuilder.KeepDry(pos + n * 1.5F + t * DetourStep, pos);
+                bestDist = float.MaxValue; progressAt = Time.time;
+                target = detour.Value;
+                flat = new Vector3(target.x - pos.x, 0, target.z - pos.z);
+            }
             if (hazard != null && hazard.active && hazard.CurrentDistance < KeepAway && flat.magnitude > step)
             {
                 // Next to the machine: slide along it instead of walking through it.
@@ -310,9 +386,16 @@ public class WorkerWalker : MonoBehaviour
                 if (dir.sqrMagnitude < 1e-4F) dir = Vector3.Cross(Vector3.up, n);       // straight at it: go sideways
                 flat = dir.normalized * Mathf.Max(flat.magnitude, step * 2F);
             }
-            if (flat.magnitude <= step)
+            if (flat.magnitude <= step && detour.HasValue)
+            {
+                // Detour point reached: carry on towards the real waypoint.
+                pos = new Vector3(target.x, pos.y, target.z);
+                detour = null; bestDist = float.MaxValue; progressAt = Time.time;
+            }
+            else if (flat.magnitude <= step)
             {
                 pos = new Vector3(target.x, pos.y, target.z);
+                bestDist = float.MaxValue; progressAt = Time.time;
                 route.Dequeue();
                 waitUntil = Time.time + wait;
                 if (route.Count == 0 && HideAtEnd) { HideAtEnd = false; transform.position = WorldBuilder.OnGround(pos); Hide(); return; }

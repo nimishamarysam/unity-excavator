@@ -40,7 +40,7 @@ public abstract class Scenario : MonoBehaviour
     // far from the work area, so no warnings in normal work. Hazard id starts with "bystander" (separate in the analysis).
     protected WorkerWalker Bystander(string name, Vector3 pos, Vector3 lookAt)
     {
-        var w = WorldBuilder.Worker(Root, name, pos);
+        var w = WorldBuilder.Worker(Root, name, WorldBuilder.KeepDry(pos, lookAt));   // never in the river
         Vector3 d = lookAt - w.transform.position; d.y = 0F;
         if (d.sqrMagnitude > 0.01F) w.transform.rotation = Quaternion.LookRotation(d);
         return w;
