@@ -307,6 +307,9 @@ public class WorkerWalker : MonoBehaviour
     // that the machine stands on or right next to (within SkipWaypointDistance) is skipped without its waiting time,
     // so he never stands pressed against the machine (e.g. the worker who stops in the reversing path).
     public static float AvoidDistance = 2.0F, SkipWaypointDistance = 3F;
+    // true = this worker never skips a stop because the machine is near it (he still walks around the machine):
+    // used for the Digging trench worker, who must stand at the trench edge on every visit.
+    public bool KeepStops;
     Vector3? detour;
     float bestDist = float.MaxValue, progressAt;
     Hazard hazard;
@@ -344,7 +347,7 @@ public class WorkerWalker : MonoBehaviour
             if (machineOn) { away = pos - hazard.MachinePoint; away.y = 0F; away = away.sqrMagnitude > 1e-4F ? away.normalized : -transform.forward; }
 
             // Waypoint blocked by the machine: skip it (and its waiting time) instead of standing against the machine.
-            if (nearMachine && !detour.HasValue)
+            if (nearMachine && !detour.HasValue && !KeepStops)
             {
                 Vector3 toWp = new Vector3(routeTarget.x - pos.x, 0, routeTarget.z - pos.z);
                 Vector3 wpToMachine = new Vector3(hazard.MachinePoint.x - routeTarget.x, 0, hazard.MachinePoint.z - routeTarget.z);

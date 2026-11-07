@@ -274,9 +274,15 @@ public class DiggingScenario : Scenario
     public static bool ServiceLinesOnGround = false;
     // Worker events: the worker walks to the trench edge when the trench is about this far done (+-0.05, per trial),
     // or at the latest at the given trial time - so every participant meets the same number of events at a similar stage.
-    static readonly float[] WorkerAtProgress = { 0.25F, 0.6F };
-    static readonly float[] WorkerLatest = { 100F, 180F };
-    const float WorkerStandSeconds = 6F;
+    // Trench-worker visits (2026-11-07, per SA variant, no random jitter): the n-th visit starts when the trench is
+    // this far done, or at the latest time (s) - whichever comes first, and never within 30 s of the previous visit.
+    //   variant 0: 2 visits at 25 % / 40 % (latest 80 s / 150 s);  variant 1: 3 visits at 80 / 150 / 200 s (time only).
+    //   Without SA variants: as before, 25 % / 60 % (100 s / 180 s).
+    static readonly float[] WorkerAtProgressV0 = { 0.25F, 0.40F }, WorkerLatestV0 = { 80F, 150F };
+    // Variant 1 (2026-11-07): by TIME only - at 80 s, 150 s and 200 s (progress shares above 1 are never reached).
+    static readonly float[] WorkerAtProgressV1 = { 2F, 2F, 2F }, WorkerLatestV1 = { 80F, 150F, 200F };
+    static readonly float[] WorkerAtProgress = { 0.25F, 0.6F }, WorkerLatest = { 100F, 180F };
+    const float WorkerStandSeconds = 5F;   // 2026-11-07: stays at the trench edge 5 s on EVERY visit (was 6 s)
     // Trench done %: smooth progress (TerrainDigger.ProgressTo) - each 0.5 m cell gives partial credit up to
     // full at TargetDepth - ProgressTolerance (1.0 m). The trial is completed at CompleteAt of the SAME number
     // the participant sees. (The old whole-cell share is still logged as dug= in the summary.)
@@ -314,7 +320,7 @@ public class DiggingScenario : Scenario
     SegmentHazard cable, pipe;
     WorkerWalker worker;
     float workerUntil = -1F;
-    float[] workerAtProgress;
+    float[] workerAtProgress, workerLatest;
     int workerEvents;
     bool overLogged, swingLogged;
     float prevAngleToWorker = -1F;
@@ -415,26 +421,56 @@ public class DiggingScenario : Scenario
         // spoil side; without SA variants as before (slightly in front).
         workerFrom = WorldBuilder.KeepDry(stand + r * (-side) * 12F + f * (!SaVariants ? 4F : Variant == 0 ? 8F : -6F), stand);
         worker = WorldBuilder.Worker(Root, "WorkerAtTrench", workerFrom);
+        worker.KeepStops = true;   // always reaches his spot at the trench edge and stays there, even with the bucket near
         worker.Hide();
         if (SaVariants)
         {
-            // Bystanders on the CABLE side (away from the spoil square), more than reach + 5 m from the machine.
-            //   variant 0: one, beside the work box;  variant 1: two, one behind-right/left of the box, one beyond the far end of the trench.
+            // Bystanders (2026-11-07):
+            //   variant 0: one, IN THE SWING PATH to the dump square: halfway (in angle) between the trench direction and
+            //   the square, at 85 % of the square's distance from the machine - the bucket passes over or near him on
+            //   every dump unless the operator notices and swings / lifts accordingly; the trench worker comes twice.
+            //   variant 1: two - one FRONT-RIGHT OF THE DIG AREA (ahead, past the far end of the trench, 4.5 m to the
+            //   right, outside the bucket's reach), one BEHIND THE DUMP SQUARE (on the line from the machine through the square, 5.5 m
+            //   past its centre); the trench worker comes three times.
             string sideName = side > 0F ? "right" : "left";   // r = right of the machine (it faces +f)
-            string where;
-            if (Variant == 0) { Bystander("Bystander1", c0 + r * side * (reach + 5F) + f * 2F, c0); where = $"{sideName}_beside_work_box"; }
+            int n = 0;
+            string where = "none";
+            if (Variant == 0)
+            {
+                Vector3 toSpoil0 = spoil - c0; toSpoil0.y = 0F;
+                float spoilDist = toSpoil0.magnitude;
+                Vector3 mid = Vector3.Slerp(f, toSpoil0 / Mathf.Max(0.01F, spoilDist), 0.5F); mid.y = 0F; mid.Normalize();
+                Bystander("Bystander1", c0 + mid * (0.85F * spoilDist), c0);
+                n = 1;
+                where = "in_swing_path_to_dump_square";
+            }
             else
             {
-                Bystander("Bystander1", c0 + r * side * (reach + 5F) - f * 6F, c0);
-                Bystander("Bystander2", trench + f * (trenchLen / 2F + 7F) + r * side * 3F, c0);
-                where = $"{sideName}_behind_work_box+{sideName}_beyond_trench_end";
+                Vector3 toSpoil = spoil - c0; toSpoil.y = 0F; toSpoil.Normalize();
+                float ahead = Mathf.Max(Vector3.Dot(trench - c0, f) + trenchLen / 2F + 4F, reach + 3F);
+                // FRONT-RIGHT of the dig area (2026-11-07): 4.5 m to the RIGHT of the trench line. Straight ahead he stood
+                // right behind the C3 depth gauge (just left of the arm); on the right he is seen to the right of the arm,
+                // clear of the gauge and the DIG VOLUME panel, also while the arm swings to the dump square.
+                Bystander("Bystander1", c0 + f * ahead + r * 4.5F, c0);   // r = right of the machine
+                Bystander("Bystander2", spoil + toSpoil * 5.5F, c0);
+                n = 2;
+                where = "front_right_of_dig_area+behind_dump_square";
             }
-            int n = Variant == 0 ? 1 : 2;
-            StudyLogger.Log("sa_truth", $"workers_total={1 + n};bystanders={n};bystander_pos={where};trench_worker_from={(Variant == 0 ? "front" : "behind")};trench_worker_side={(side > 0F ? "left" : "right")};cable_side={sideName}");
+            int visits = Variant == 0 ? WorkerAtProgressV0.Length : WorkerAtProgressV1.Length;
+            StudyLogger.Log("sa_truth", $"workers_total={1 + n};bystanders={n};bystander_pos={where};trench_worker_visits_planned={visits};trench_worker_from={(Variant == 0 ? "front" : "behind")};trench_worker_side={(side > 0F ? "left" : "right")};cable_side={sideName}");
         }
         Rng = trialRng;                                       // event timing varies per trial
-        workerAtProgress = new float[WorkerAtProgress.Length];
-        for (int i = 0; i < workerAtProgress.Length; i++) workerAtProgress[i] = WorkerAtProgress[i] + Rand(-0.05F, 0.05F);
+        if (SaVariants)
+        {
+            workerAtProgress = (float[])(Variant == 0 ? WorkerAtProgressV0 : WorkerAtProgressV1).Clone();
+            workerLatest = (float[])(Variant == 0 ? WorkerLatestV0 : WorkerLatestV1).Clone();
+        }
+        else
+        {
+            workerAtProgress = new float[WorkerAtProgress.Length];
+            for (int i = 0; i < workerAtProgress.Length; i++) workerAtProgress[i] = WorkerAtProgress[i] + Rand(-0.05F, 0.05F);
+            workerLatest = (float[])WorkerLatest.Clone();
+        }
         workerStand = stand;
 
         load = gameObject.AddComponent<BucketLoad>();
@@ -642,7 +678,7 @@ public class DiggingScenario : Scenario
         // Next worker event: when the trench is far enough along (or at the latest time), and not while one is running.
         if (arrived && workerEvents < workerAtProgress.Length && t > workerUntil
             && (TerrainDigger.Instance.ProgressTo(TargetDepth, ProgressTolerance, ProgressWallMargin) >= workerAtProgress[workerEvents]
-                || t >= WorkerLatest[workerEvents]))
+                || t >= workerLatest[workerEvents]))
         {
             workerEvents++;
             Vector3 from = workerFrom;
