@@ -988,8 +988,8 @@ public class PracticeGuide : MonoBehaviour
         switch (a)
         {
             // The task panel is scaled by the Display 1 text size from the screen's top-left corner (ScenarioRunner).
-            case Area.TaskPanel: return Scaled(new Rect(m, m, width, textH + incH + 16F));
-            case Area.Incidents: return Scaled(new Rect(m, m + 8F + textH - 4F, width, incH + 8F));
+            case Area.TaskPanel: return ScenarioRunner.TryGetPanelRect(out Rect tp) ? tp : Scaled(new Rect(m, m, width, textH + incH + 16F));
+            case Area.Incidents: return ScenarioRunner.TryGetIncidentRect(out Rect ip) ? ip : Scaled(new Rect(m, m + 8F + textH - 4F, width, incH + 8F));
             case Area.StatusBar:
                 float h = StudyLayout.BarHeight * Screen.height;
                 return new Rect(0F, Screen.height - h, Screen.width, h);

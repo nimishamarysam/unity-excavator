@@ -299,42 +299,60 @@ public class ScenarioRunner : MonoBehaviour
         if (current == null || sm == null || sm.CurrentState != StudyManager.State.Running) return;
         if (title == null)
         {
-            title = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, wordWrap = true };
-            body = new GUIStyle(GUI.skin.label) { fontSize = 17, wordWrap = true };
+            title = new GUIStyle(GUI.skin.label) { fontSize = 17, fontStyle = FontStyle.Bold, wordWrap = true };
+            body = new GUIStyle(GUI.skin.label) { fontSize = 15, wordWrap = true };
         }
-        if (incidentStyle == null) incidentStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold, wordWrap = true };
+        if (incidentStyle == null) incidentStyle = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold, wordWrap = false };
 
         // Display 1 text size: the whole panel (text, incident line, map) is scaled from the top-left corner.
         var oldMatrix = GUI.matrix;
-        float ts = StudyLayout.TextScale;
+        float ts = StudyLayout.TextScale * TaskPanelScale;
         GUI.matrix = Matrix4x4.Scale(new Vector3(ts, ts, 1F)) * oldMatrix;
         try { DrawTaskPanel(); }
         finally { GUI.matrix = oldMatrix; }
     }
 
+    // COMPACT TASK PANEL (2026-11-07): smaller text, narrower, and only as tall as its text, so it covers less of the
+    // driver view and the C3 cues. TaskPanelScale = its size relative to the Display 1 text size (+ / - keys).
+    public static float TaskPanelScale = 0.85F;
+    const float PanelWidth = 430F, PanelWidthMap = 530F, PanelPad = 10F, IncH = 20F, MapW = 105F, MapMinH = 110F;
+
+    // Where the task panel / its incident line were drawn last (GUI pixels, y down), for the practice-guide
+    // outlines and the C3 banner (kept below the panel). Valid while the panel is shown.
+    static Rect lastPanel, lastIncidents;
+    static int lastPanelFrame = -10;
+    public static bool TryGetPanelRect(out Rect panel) { panel = lastPanel; return Time.frameCount - lastPanelFrame <= 2; }
+    public static bool TryGetIncidentRect(out Rect inc) { inc = lastIncidents; return Time.frameCount - lastPanelFrame <= 2; }
+
     void DrawTaskPanel()
     {
         // Task panel: task, progress and incidents on the left; (if the scenario has one) a small line map on the right.
         bool hasMap = current.Map != null;
-        const float textH = 118F, incH = 26F, mapW = 130F;
-        float width = hasMap ? 640F : 520F;
-        var r = new Rect(16, 16, width, textH + incH + 16F);
-        float textW = r.width - 24F - (hasMap ? mapW + 10F : 0F);
+        float width = hasMap ? PanelWidthMap : PanelWidth;
+        float textW = width - 2F * PanelPad - (hasMap ? MapW + 8F : 0F);
+        string task = current.TaskText, prog = current.ProgressText;
+        float th = title.CalcHeight(new GUIContent(task), textW);
+        float bh = string.IsNullOrEmpty(prog) ? 0F : body.CalcHeight(new GUIContent(prog), textW);
+        float h = Mathf.Max(th + 2F + bh + 4F + IncH + 2F * PanelPad, hasMap ? MapMinH : 0F);
+        var r = new Rect(12, 12, width, h);
         GUI.color = new Color(0, 0, 0, 0.55F);
         GUI.DrawTexture(r, Texture2D.whiteTexture);
         GUI.color = Color.white;
-        GUILayout.BeginArea(new Rect(r.x + 12, r.y + 8, textW, textH));
-        GUILayout.Label(current.TaskText, title);
-        GUILayout.Label(current.ProgressText, body);
-        GUILayout.EndArea();
+        GUI.Label(new Rect(r.x + PanelPad, r.y + PanelPad, textW, th), task, title);
+        if (bh > 0F) GUI.Label(new Rect(r.x + PanelPad, r.y + PanelPad + th + 2F, textW, bh), prog, body);
+        var incRect = new Rect(r.x + PanelPad, r.yMax - PanelPad - IncH, textW, IncH);
+        float sc = GUI.matrix.m00;   // panel scale (set in OnGUI)
+        lastPanel = new Rect(r.x * sc, r.y * sc, r.width * sc, r.height * sc);
+        lastIncidents = new Rect(r.x * sc, (incRect.y - 4F) * sc, r.width * sc, (IncH + 8F) * sc);
+        lastPanelFrame = Time.frameCount;
 
         // Incident line: counter + the last incident; red for a few seconds after a new one.
         float ago = Time.unscaledTime - IncidentFeedback.LastIncidentTime;
         string inc = IncidentFeedback.Count == 0 ? "Incidents: 0"
                    : $"Incidents: {IncidentFeedback.Count}    Last: {IncidentFeedback.LastDescription} ({Mathf.FloorToInt(ago)} s ago)";
         incidentStyle.normal.textColor = IncidentFeedback.Count > 0 && ago < 4F ? new Color(1F, 0.35F, 0.3F) : new Color(0.85F, 0.85F, 0.85F);
-        GUI.Label(new Rect(r.x + 12, r.y + 8 + textH, textW, incH), inc, incidentStyle);
+        GUI.Label(incRect, inc, incidentStyle);
 
-        if (hasMap) current.Map.Draw(new Rect(r.xMax - 8F - mapW, r.y + 8F, mapW, r.height - 16F));
+        if (hasMap) current.Map.Draw(new Rect(r.xMax - PanelPad - MapW, r.y + PanelPad, MapW, r.height - 2F * PanelPad));
     }
 }

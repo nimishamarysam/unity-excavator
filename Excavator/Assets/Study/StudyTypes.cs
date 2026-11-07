@@ -103,9 +103,7 @@ public static class StudyDesign
             case StudyCondition.C2_ContextAware:
                 return "You will see the measurement bar and an extra camera view that changes to match what you are doing.";
             default:
-                return "You will see the measurement bar, the extra camera views, and guidance overlays: boxes around obstacles " +
-                       "and people, the path to drive, the dig area with the bucket position marked on the ground, " +
-                       "and a suggested bucket path for each scoop.";
+                return "You will see the measurement bar, the extra camera views, and guidance overlays ";
         }
     }
 
@@ -126,7 +124,7 @@ public static class StudyDesign
         {
             case StudyScenario.Practice:
                 return "Nothing is measured during the practice session. " + (InstructionDisplay.Active && PracticeGuide.OnInstructionDisplay ? "This session" : "The panel on the right of the main screen") + " guides you through three phases:\n\n" +
-                       "Phase 1 - Basic controls:\n\n" +
+                       "Phase 1 - Basic controls \n\n" +
                        "Phase 2 - Digging and dumping practice\n\n" +
                        $"Phase 3 - Free practice";
                        //$"{StickControls.HoldConfirm} when you are ready to start the tasks " +
@@ -145,12 +143,12 @@ public static class StudyDesign
                 string dumpWhere = dumpSide != null ? $"Swing the cab to the {dumpSide.ToUpper()}" : "Swing the cab";
                 return $"Goal: Dig the brown trench (DIG) to {DiggingScenario.TargetDepth:0.0} m deep and dump the soil on the white DUMP pit. " +
                        "The site map on the right shows where everything is.\n\n" +
-                       $"1. Drive forward into the yellow WORK BOX: {StickControls.DriveForward}. Then switch to DIG mode.\n" +
-                       $"2. Dig only inside the brown trench. BUCKET HEIGHT in the status bar shows the depth: aim for -{DiggingScenario.TargetDepth:0.00} m, not deeper.\n" +
-                       $"3. {dumpWhere} to the small white DUMP square and empty the bucket inside it. Soil anywhere else counts as a spill.\n\n" +
+                       $"1. Drive forward into the yellow WORK BOX. Then switch to DIG mode.\n" +
+                       $"2. Dig soil from the brown trench. BUCKET HEIGHT in the status bar shows the depth: aim for -{DiggingScenario.TargetDepth:0.00} m, not deeper.\n" +
+                       $"3. Empty the bucket inside the white DUMP square and empty the bucket inside it. Soil anywhere else counts as a spill.\n\n" +
                        "Markers on the ground:\n" +
                        $"- ORANGE posts: a buried electric CABLE runs {cableWhere}, between the posts. Do not dig outside the trench there.\n" +
-                       "- YELLOW posts (two, one each side of the trench): a water PIPE crosses UNDER the trench between them, " +
+                       "- YELLOW posts : a water PIPE crosses UNDER the trench between them, " +
                        $"just below the target depth. Do not dig deeper than {DiggingScenario.TargetDepth:0.0} m near them.\n\n" +
                        "A worker may walk up to the trench - never swing the bucket over a person.";
             }

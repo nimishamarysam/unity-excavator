@@ -378,7 +378,11 @@ public class DrivingCues : MonoBehaviour
         if (!root.Profile.steeringBanner && !urgent) { bannerBox.Hide(); return; }
         Color bc = bannerColor;
         if (bannerCode.StartsWith("STOP")) bc.a = CueKit.Pulse(8F, 0.55F);
-        bannerBox.ShowTag(new Vector2(view.center.x, view.yMax - 0.15F), new Vector2(0.5F, 1F), bc, banner);
+        // Just below the task panel when the panel reaches further down than the usual banner position (2026-11-07).
+        float by = view.yMax - 0.15F;
+        if (ScenarioRunner.TryGetPanelRect(out Rect panel))
+            by = Mathf.Min(by, 1F - (panel.yMax + 8F) / Mathf.Max(1F, Screen.height));
+        bannerBox.ShowTag(new Vector2(view.center.x, by), new Vector2(0.5F, 1F), bc, banner);
     }
 
     static Gradient Split(Color a, Color b, float split, float alphaA, float alphaB)
