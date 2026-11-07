@@ -110,9 +110,12 @@ public class PracticeGuide : MonoBehaviour
     const float StickOn = 0.2F;                   // stick deflection that counts as "pushed" (fills the hold bar)
     const float StickTouch = 0.05F;               // right control moved at all: never a "Not quite" hint
     static float on = StickOn;                    // threshold used by the step checks (StickOn, or StickTouch in Near)
-    // Turn steps: the other track must be at least this much less than the driving one (35 %, at least 0.1),
-    // so a slight turn counts as well as a full one.
-    static float TurnGap(float drive) => Mathf.Max(0.1F, TrackDiff * Mathf.Abs(drive));
+    // DIRECTION ACCURACY (2026-11-07): a step counts as correct only when the stick goes (nearly) straight in the
+    // shown direction. Every other input - the other axis of the same stick, the other stick, the other track -
+    // must stay below DirTolerance of the main input (0.25 = about 14 degrees off the arrow), so "slightly forward
+    // left" is NOT "left". For the straight drive steps the two tracks may differ by DirTolerance of the larger one.
+    const float DirTolerance = 0.25F;
+    static float Tol(float main) => Mathf.Max(0.05F, DirTolerance * Mathf.Abs(main));
     const float TrackDiff = 0.35F;                // difference between the two tracks for a turn / allowed for straight
 
     public static PracticeGuide Current { get; private set; }
@@ -210,27 +213,27 @@ public class PracticeGuide : MonoBehaviour
         AddDrive("drive_fwd", "Drive forward",
             "Push BOTH sticks forward (up) the same amount. Both tracks drive forward.", "Y + U",
             new Vector2(0, 1), new Vector2(0, 1),
-            s => s.trackLeft >= on && s.trackRight >= on && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
+            s => s.trackLeft >= on && s.trackRight >= on && Mathf.Abs(s.trackLeft - s.trackRight) <= Tol(Mathf.Max(s.trackLeft, s.trackRight)));
         AddDrive("drive_back", "Drive backward",
             "Pull BOTH sticks back the same amount. Both tracks drive backward.", "R + O",
             new Vector2(0, -1), new Vector2(0, -1),
-            s => s.trackLeft <= -on && s.trackRight <= -on && Mathf.Abs(s.trackLeft - s.trackRight) <= TrackDiff);
+            s => s.trackLeft <= -on && s.trackRight <= -on && Mathf.Abs(s.trackLeft - s.trackRight) <= Tol(Mathf.Min(s.trackLeft, s.trackRight)));
         AddDrive("turn_left_fwd", "Turn LEFT",
             "Push only the RIGHT stick forward, keep the left stick in the middle.\nThe right track drives, so the machine turns to the left.", "U",
             new Vector2(0, 0), new Vector2(0, 1),
-            s => s.trackRight >= on && s.trackLeft >= -0.15F && s.trackLeft <= s.trackRight - TurnGap(s.trackRight));
+            s => s.trackRight >= on && Mathf.Abs(s.trackLeft) <= Tol(s.trackRight));
         AddDrive("turn_right_fwd", "Turn RIGHT",
             "Push only the LEFT stick forward, keep the right stick in the middle.\nThe left track drives, so the machine turns to the right.", "Y",
             new Vector2(0, 1), new Vector2(0, 0),
-            s => s.trackLeft >= on && s.trackRight >= -0.15F && s.trackRight <= s.trackLeft - TurnGap(s.trackLeft));
+            s => s.trackLeft >= on && Mathf.Abs(s.trackRight) <= Tol(s.trackLeft));
         AddDrive("turn_right_back", "Turn REAR-RIGHT",
             "Pull only the LEFT stick back, keep the right stick in the middle.\nThe machine reverses and its rear swings to the RIGHT.", "R",
             new Vector2(0, -1), new Vector2(0, 0),
-            s => s.trackLeft <= -on && s.trackRight <= 0.15F && s.trackRight >= s.trackLeft + TurnGap(s.trackLeft));
+            s => s.trackLeft <= -on && Mathf.Abs(s.trackRight) <= Tol(s.trackLeft));
         AddDrive("turn_left_back", "Turn REAR-LEFT",
             "Pull only the RIGHT stick back, keep the left stick in the middle.\nThe machine reverses and its rear swings to the LEFT.", "O",
             new Vector2(0, 0), new Vector2(0, -1),
-            s => s.trackRight <= -on && s.trackLeft <= 0.15F && s.trackLeft >= s.trackRight + TurnGap(s.trackRight));
+            s => s.trackRight <= -on && Mathf.Abs(s.trackLeft) <= Tol(s.trackRight));
 
         steps.Add(new Step { id = "mode_dig", kind = Kind.ModeDig, title = "Switch to DIG mode",
             how = "Press the B button again.\nMODE in the status bar (bottom) changes to DIG. In DIG mode the sticks move the boom, arm, bucket and cab.",
@@ -388,9 +391,18 @@ public class PracticeGuide : MonoBehaviour
             ok = s =>
             {
                 float v = axis(s) * sign;
-                float maxOther = Mathf.Max(Mathf.Abs(s.swing), Mathf.Abs(s.boom), Mathf.Abs(s.arm), Mathf.Abs(s.bucket));
-                // Fills the bar: the right control is the main one. Near (StickTouch): moved at all, other controls allowed.
-                return v >= on && (on <= StickTouch || v >= maxOther - 0.001F);
+                // Largest of the OTHER three controls (the step's own control removed once).
+                float a0 = Mathf.Abs(s.swing), a1 = Mathf.Abs(s.boom), a2 = Mathf.Abs(s.arm), a3 = Mathf.Abs(s.bucket);
+                float own = Mathf.Abs(axis(s));
+                float maxOther = 0F; bool skipped = false;
+                foreach (float a in new[] { a0, a1, a2, a3 })
+                {
+                    if (!skipped && Mathf.Approximately(a, own)) { skipped = true; continue; }
+                    maxOther = Mathf.Max(maxOther, a);
+                }
+                // Correct = the right control in the right direction, and every other control nearly still
+                // (DirTolerance), also for the small "Near" deflections.
+                return v >= on && maxOther <= Tol(v);
             }
         });
     }
@@ -766,6 +778,14 @@ public class PracticeGuide : MonoBehaviour
 
         // Stick diagrams (or the B button / trigger for the mode steps).
         float d = Mathf.Min((w - 30 * k) / 2F, 170F * k);
+        // OK-button steps: shrink the stick diagrams so everything below them (legend, feedback line and the
+        // "Press the OK button to continue" row) still fits inside the panel at any text size.
+        if (AdvanceWithOK && (s.kind == Kind.Drive || s.kind == Kind.Dig))
+        {
+            float extra = StickControls.SingleStick && s.kind == Kind.Dig ? 22F * k : 0F;   // single stick: trigger line
+            float below = 34F * k + 34F * k + 50F * k + 54F * k + 24F * k + 8F * k;       // diagram gap, legend, feedback, OK row, margin
+            d = Mathf.Max(50F * k, Mathf.Min(d, r.yMax - y - 22F * k - below - extra));
+        }
         if (s.kind == Kind.ModeDrive || s.kind == Kind.ModeDig)
         {
             var b = new Rect(x + (w - d) / 2F, y + 22 * k, d, d);
@@ -802,10 +822,10 @@ public class PracticeGuide : MonoBehaviour
                        : !modeOk ? $"You are in {(ctl.IsTravelMode ? "DRIVE" : "DIG")} mode. {StickControls.Cap(StickControls.ModeSwitch)} to switch to {(needDrive ? "DRIVE" : "DIG")} mode."
                        : "Not quite - move the stick the way the arrow points.";
             hint.normal.textColor = lastOk || lastNear ? new Color(0.4F, 1F, 0.5F) : new Color(1F, 0.65F, 0.25F);
-            GUI.Label(new Rect(x, y, w, 60 * k), hOk, hint);
+            GUI.Label(new Rect(x, y, w, 50 * k), hOk, hint);
 
             bool ready = ControlReady(s);
-            float bs = 54F * k, by = Mathf.Max(y + 64F * k, r.yMax - bs - 24F * k);
+            float bs = 54F * k, by = Mathf.Min(r.yMax - bs - 8F * k, Mathf.Max(y + 50F * k, r.yMax - bs - 24F * k));
             float bw = ButtonBoxWidth(bs, k);
             var a = new Rect(x, by, bw, bs);
             Fill(a, ready ? new Color(0.2F, 0.7F, 0.25F) : new Color(0.3F, 0.3F, 0.32F));

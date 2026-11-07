@@ -126,9 +126,9 @@ public static class StudyDesign
         {
             case StudyScenario.Practice:
                 return "Nothing is measured during the practice session. " + (InstructionDisplay.Active && PracticeGuide.OnInstructionDisplay ? "This session" : "The panel on the right of the main screen") + " guides you through three phases:\n\n" +
-                       "Phase 1 - Basic controls: You will familiarize with one control at a time. Hold each control until its bar is full. You will also be guided through each element present on the screen.\n\n" +
-                       "Phase 2 - Digging and dumping: You will familiarize with digging and dumping process. Dig the oil from the BROWN square and dump it on the WHITE square as instructed.\n\n" +
-                       $"Phase 3 - Free practice: You get to practice the controls and movements on your own. ";
+                       "Phase 1 - Basic controls:\n\n" +
+                       "Phase 2 - Digging and dumping practice\n\n" +
+                       $"Phase 3 - Free practice";
                        //$"{StickControls.HoldConfirm} when you are ready to start the tasks " +
                        //"(the practice ends after 3 minutes at the latest).";
             case StudyScenario.Easy_Driving:
